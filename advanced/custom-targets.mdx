@@ -1,0 +1,261 @@
+---
+title: "Custom Targets"
+description: "Create your own NLog target to send log events to any destination."
+---
+
+A custom target lets you route log events anywhere—a REST API, an in-memory queue, a proprietary data store, or any destination not covered by the built-in targets.
+
+## Choosing a base class
+
+| Base class | When to use |
+|---|---|
+| `Target` | Bare-minimum base; you render layouts manually |
+| `TargetWithLayout` | Adds a pre-configured `Layout` property with the default format `${longdate}\|${level:uppercase=true}\|${logger}\|${message:withexception=true}` |
+| `TargetWithContext` | Extends `TargetWithLayout` with structured context properties and MDLC/NDLC capture |
+
+Most custom targets should inherit from `TargetWithLayout` unless they need fine-grained control over layout management.
+
+## Applying the `[Target]` attribute
+
+The `[Target]` attribute (from `NLog.Targets.TargetAttribute`) associates a string alias with your class. That alias is what you use in the `xsi:type` attribute in XML config.
+
+```csharp
+[Target("InMemory")]
+public sealed class InMemoryTarget : TargetWithLayout
+{
+    // ...
+}
+```
+
+The attribute accepts `IsWrapper = true` or `IsCompound = true` flags for wrapper / compound targets.
+
+## Core override methods
+
+### `Write(LogEventInfo logEvent)` — synchronous write
+
+Override this method to handle a single log event. This is the most common override.
+
+```csharp
+protected override void Write(LogEventInfo logEvent)
+{
+    string message = RenderLogEvent(Layout, logEvent);
+    // send 'message' somewhere
+}
+```
+
+Use the inherited helper `RenderLogEvent(Layout, logEvent)` to render a `Layout` property into a string. This helper is allocation-efficient and cache-aware.
+
+### `Write(AsyncLogEventInfo logEvent)` — async write
+
+Override this instead of the synchronous `Write` when your destination is inherently async (e.g., HTTP). You are responsible for calling `logEvent.Continuation` when the write completes or fails.
+
+```csharp
+protected override void Write(AsyncLogEventInfo logEvent)
+{
+    try
+    {
+        string message = RenderLogEvent(Layout, logEvent.LogEvent);
+        // ... async operation ...
+        logEvent.Continuation(null); // success
+    }
+    catch (Exception ex)
+    {
+        if (ExceptionMustBeRethrown(ex)) throw;
+        logEvent.Continuation(ex);   // report failure
+    }
+}
+```
+
+### `InitializeTarget()` — setup resources
+
+Called once when NLog activates the target. Open connections, allocate buffers, or validate configuration here. Always call `base.InitializeTarget()` first so NLog can scan your layouts.
+
+```csharp
+protected override void InitializeTarget()
+{
+    base.InitializeTarget(); // required
+    _httpClient = new HttpClient();
+    _httpClient.BaseAddress = new Uri(Endpoint);
+}
+```
+
+### `CloseTarget()` — release resources
+
+Called when NLog shuts down the target. Flush pending work and dispose resources here.
+
+```csharp
+protected override void CloseTarget()
+{
+    _httpClient?.Dispose();
+    base.CloseTarget();
+}
+```
+
+## Configurable properties
+
+Any public property with a getter and setter is automatically settable from XML config or the fluent API. Use the `Layout` type for properties that accept layout strings so users can embed `${...}` renderers.
+
+```csharp
+public Layout Endpoint { get; set; } = "http://localhost/logs";
+public Layout ApiKey { get; set; } = string.Empty;
+```
+
+In XML config:
+
+```xml
+<target xsi:type="InMemory"
+        name="mem"
+        layout="${longdate} ${message}"
+        endpoint="http://logs.example.com"
+        apiKey="${environment:MY_API_KEY}" />
+```
+
+## Thread safety
+
+NLog layouts are thread-safe by default. The base `Target` class serialises calls to `Write(LogEventInfo)` through an internal `SyncRoot` lock via `WriteAsyncThreadSafe`. If you override `WriteAsyncThreadSafe` directly to bypass the lock, you are responsible for your own synchronisation.
+
+```csharp
+// Only override WriteAsyncThreadSafe if you provide your own synchronization.
+// For the vast majority of targets, just override Write(LogEventInfo) instead.
+protected override void WriteAsyncThreadSafe(AsyncLogEventInfo logEvent)
+{
+    lock (SyncRoot)
+    {
+        Write(logEvent);
+    }
+}
+```
+
+<Note>
+Do not use `Thread.Sleep`, blocking I/O, or other long-running operations inside `Write(LogEventInfo)` without wrapping the target in an `AsyncTargetWrapper`. Blocking the logging call blocks the application thread.
+</Note>
+
+## Complete example: in-memory target
+
+The following target collects formatted log messages into a thread-safe list. It is useful in tests or diagnostics dashboards.
+
+```csharp
+using System.Collections.Generic;
+using NLog;
+using NLog.Config;
+using NLog.Layouts;
+using NLog.Targets;
+
+[Target("InMemory")]
+public sealed class InMemoryTarget : TargetWithLayout
+{
+    private readonly List<string> _logs = new List<string>();
+
+    /// <summary>Maximum number of entries to keep (0 = unlimited).</summary>
+    public int MaxEntries { get; set; } = 1000;
+
+    /// <summary>A snapshot of all collected log entries.</summary>
+    public IReadOnlyList<string> Logs
+    {
+        get
+        {
+            lock (SyncRoot)
+            {
+                return _logs.ToArray();
+            }
+        }
+    }
+
+    protected override void InitializeTarget()
+    {
+        base.InitializeTarget();
+        lock (SyncRoot)
+        {
+            _logs.Clear();
+        }
+    }
+
+    protected override void Write(LogEventInfo logEvent)
+    {
+        string message = RenderLogEvent(Layout, logEvent);
+
+        lock (SyncRoot)
+        {
+            if (MaxEntries > 0 && _logs.Count >= MaxEntries)
+                _logs.RemoveAt(0);
+
+            _logs.Add(message);
+        }
+    }
+}
+```
+
+### Registering via the fluent API
+
+```csharp
+LogManager.Setup()
+    .SetupExtensions(s => s.RegisterTarget<InMemoryTarget>("InMemory"))
+    .LoadConfigurationFromFile("NLog.config");
+```
+
+### Using the target in XML config
+
+```xml
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <targets>
+    <target xsi:type="InMemory"
+            name="mem"
+            maxEntries="500"
+            layout="${longdate}|${level}|${logger}|${message:withexception=true}" />
+  </targets>
+
+  <rules>
+    <logger name="*" minlevel="Debug" writeTo="mem" />
+  </rules>
+</nlog>
+```
+
+### Using the target without an XML config file
+
+```csharp
+var config = new LoggingConfiguration();
+var memTarget = new InMemoryTarget
+{
+    Name = "mem",
+    MaxEntries = 200,
+    Layout = "${longdate}|${level}|${message}"
+};
+
+config.AddTarget(memTarget);
+config.AddRuleForAllLevels(memTarget);
+LogManager.Configuration = config;
+
+var logger = LogManager.GetCurrentClassLogger();
+logger.Info("Hello from the in-memory target");
+
+// Later in tests:
+var logs = memTarget.Logs;
+```
+
+## Registering via XML `<extensions>`
+
+If you prefer XML-only setup, reference your assembly in `<extensions>` and NLog will discover the `[Target("InMemory")]` attribute automatically.
+
+```xml
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <extensions>
+    <add assembly="MyApp.Logging" />
+  </extensions>
+
+  <targets>
+    <target xsi:type="InMemory" name="mem" maxEntries="500" />
+  </targets>
+
+  <rules>
+    <logger name="*" minlevel="Info" writeTo="mem" />
+  </rules>
+</nlog>
+```
+
+<Warning>
+Assembly scanning is not compatible with .NET AOT or trimmed builds. Use the `SetupExtensions` fluent API to register types explicitly in those scenarios.
+</Warning>

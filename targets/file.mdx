@@ -1,0 +1,229 @@
+---
+title: "File Target"
+description: "Write log messages to files with rotation, archiving, and compression support."
+---
+
+The `File` target writes formatted log messages to one or more log files. It is the most commonly used NLog target and supports a rich set of options for file rotation, archiving, performance tuning, and encoding.
+
+## Basic Configuration
+
+<Tabs>
+  <Tab title="XML">
+    ```xml
+    <targets>
+      <target xsi:type="File"
+              name="logfile"
+              fileName="${basedir}/logs/app.log"
+              layout="${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}" />
+    </targets>
+
+    <rules>
+      <logger name="*" minlevel="Debug" writeTo="logfile" />
+    </rules>
+    ```
+  </Tab>
+  <Tab title="C#">
+    ```csharp
+    var config = new NLog.Config.LoggingConfiguration();
+
+    var fileTarget = new NLog.Targets.FileTarget("logfile")
+    {
+        FileName = "${basedir}/logs/app.log",
+        Layout = "${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}"
+    };
+
+    config.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, fileTarget);
+    NLog.LogManager.Configuration = config;
+    ```
+  </Tab>
+</Tabs>
+
+The `fileName` attribute supports layout renderers, so a single `File` target can write to multiple files simultaneously. For example, `${basedir}/${level}.log` routes each log level to its own file.
+
+<Note>
+When `fileName` is a relative path, it is resolved against `AppDomain.BaseDirectory`.
+</Note>
+
+## Complete Configuration Example
+
+```xml
+<target xsi:type="File"
+        name="logfile"
+        fileName="${basedir}/logs/app.log"
+        archiveFileName="${basedir}/logs/archives/app.{###}.log"
+        archiveAboveSize="10485760"
+        archiveEvery="Day"
+        maxArchiveFiles="7"
+        maxArchiveDays="30"
+        keepFileOpen="true"
+        autoFlush="true"
+        bufferSize="32768"
+        encoding="utf-8"
+        createDirs="true"
+        layout="${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}">
+  <header>-- Log started at ${longdate} --</header>
+  <footer>-- Log ended at ${longdate} --</footer>
+</target>
+```
+
+## Output Options
+
+<ParamField path="fileName" type="Layout" required>
+  The path of the file to write to. Supports layout renderers for dynamic file names. When not an absolute path, it is resolved against `AppDomain.BaseDirectory`.
+</ParamField>
+
+<ParamField path="layout" type="Layout" default="${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}">
+  The layout used to format each log message.
+</ParamField>
+
+<ParamField path="header" type="Layout">
+  A layout rendered and written when the file is first opened.
+</ParamField>
+
+<ParamField path="footer" type="Layout">
+  A layout rendered and written when the target is closed.
+</ParamField>
+
+<ParamField path="encoding" type="Encoding" default="UTF-8">
+  The file encoding. Common values: `utf-8`, `utf-16`, `ascii`.
+</ParamField>
+
+<ParamField path="createDirs" type="bool" default="true">
+  Create directories in the file path if they do not already exist. Set to `false` for a small performance gain if the directory is guaranteed to exist.
+</ParamField>
+
+<ParamField path="deleteOldFileOnStartup" type="bool" default="false">
+  Delete the existing log file on startup and reset the sequence number.
+</ParamField>
+
+<ParamField path="lineEnding" type="LineEndingMode" default="Default">
+  Controls line endings written after each log message. Values: `Default`, `CRLF`, `LF`, `CR`, `None`.
+</ParamField>
+
+## Archiving Options
+
+NLog can automatically rotate (archive) log files based on size or time period.
+
+<ParamField path="archiveAboveSize" type="long" default="0">
+  Archive the current log file when it exceeds this size in bytes. Zero or negative disables size-based archiving.
+
+  ```xml
+  archiveAboveSize="10485760"  <!-- 10 MB -->
+  ```
+</ParamField>
+
+<ParamField path="archiveEvery" type="FileArchivePeriod" default="None">
+  Archive the current log file based on a time period. Values: `None`, `Year`, `Month`, `Day`, `Hour`, `Minute`, `Sunday`–`Saturday`.
+
+  ```xml
+  archiveEvery="Day"
+  ```
+
+  <Note>
+  `archiveEvery` only works if `fileName` is static (not containing `${date}` or `${shortdate}`). NLog uses the file's birth time to detect when the period has elapsed, which requires filesystem support.
+  </Note>
+</ParamField>
+
+<ParamField path="archiveFileName" type="Layout">
+  The path template for archived files. Use `{###}` as a placeholder for the sequence number, or include date layout renderers.
+
+  ```xml
+  archiveFileName="${basedir}/logs/archives/app.{###}.log"
+  ```
+
+  <Tip>
+  Prefer using `archiveSuffixFormat` over `{#}` tokens, which are legacy syntax. The modern approach relies solely on `fileName` combined with `archiveSuffixFormat`.
+  </Tip>
+</ParamField>
+
+<ParamField path="maxArchiveFiles" type="int" default="-1">
+  The maximum number of archive files to keep. Older archives are deleted when this limit is exceeded. `-1` disables the limit.
+</ParamField>
+
+<ParamField path="maxArchiveDays" type="int" default="0">
+  The maximum age in days of archive files to keep. Archives older than this are deleted. Zero disables age-based cleanup.
+</ParamField>
+
+<ParamField path="archiveOldFileOnStartup" type="bool" default="false">
+  Archive the existing log file when the application starts, ensuring each session gets a fresh log file.
+</ParamField>
+
+### Archive Numbering
+
+The `archiveNumbering` property (legacy) controls how archive files are sequenced. The modern equivalent is `archiveSuffixFormat`:
+
+| Mode | Behavior |
+|---|---|
+| `Sequence` | Archives numbered `_01`, `_02`, etc. Oldest gets the lowest number. |
+| `Rolling` | Archives roll: oldest is always the highest number. |
+| `Date` | Archive file name includes date stamp. |
+| `DateAndSequence` | Combines date stamp and sequence number. |
+
+## Performance Options
+
+<ParamField path="keepFileOpen" type="bool" default="true">
+  Keep the log file open between writes instead of opening and closing it for every log event.
+
+  - `true` (default): best performance; ensures the file lock is not lost to other processes.
+  - `false`: best compatibility; slower and may cause file-locking conflicts.
+</ParamField>
+
+<ParamField path="autoFlush" type="bool" default="true">
+  Automatically flush the file buffer after each log message. Disable for higher throughput at the cost of potential data loss on crash.
+</ParamField>
+
+<ParamField path="bufferSize" type="int" default="32768">
+  The internal write buffer size in bytes (default: 32 KB).
+</ParamField>
+
+<ParamField path="openFileCacheSize" type="int" default="5">
+  The maximum number of files to keep open simultaneously. Increase when writing to many files (e.g., splitting by logger name or level). Files are closed in least-recently-used order.
+</ParamField>
+
+<ParamField path="openFileCacheTimeout" type="int" default="0">
+  Maximum number of seconds before an open file handle is released. Zero or negative disables the timeout.
+</ParamField>
+
+<ParamField path="openFileFlushTimeout" type="int" default="0">
+  Maximum number of seconds before open files are flushed. Zero or negative disables periodic flushing.
+</ParamField>
+
+<ParamField path="openFileCacheSize" type="int" default="5">
+  Maximum number of log files to keep open simultaneously. Increase if you use many different file name patterns. Set to `0` to always open and close on each write.
+</ParamField>
+
+## Splitting Logs by Level
+
+Because `fileName` supports layout renderers, you can route different log levels to separate files with a single target:
+
+```xml
+<target xsi:type="File"
+        name="levelfiles"
+        fileName="${basedir}/logs/${level:lowercase=true}.log"
+        layout="${longdate}|${logger}|${message:withexception=true}" />
+```
+
+This writes `Debug` events to `debug.log`, `Error` events to `error.log`, and so on.
+
+## Async File Writing
+
+For high-throughput applications, wrap the `File` target with `AsyncWrapper` to offload disk I/O to a background thread:
+
+```xml
+<targets>
+  <target xsi:type="AsyncWrapper" name="asyncFile" queueLimit="10000" overflowAction="Discard">
+    <target xsi:type="File"
+            fileName="${basedir}/logs/app.log"
+            keepFileOpen="true"
+            autoFlush="false" />
+  </target>
+</targets>
+```
+
+Or use the shorthand on the `<targets>` element:
+
+```xml
+<targets async="true">
+  <target xsi:type="File" name="logfile" fileName="${basedir}/logs/app.log" />
+</targets>
+```

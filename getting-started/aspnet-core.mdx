@@ -1,0 +1,204 @@
+---
+title: "ASP.NET Core"
+description: "Integrate NLog with ASP.NET Core using Microsoft.Extensions.Logging."
+---
+
+NLog integrates with ASP.NET Core through `Microsoft.Extensions.Logging`. Two packages are available depending on how much integration you need:
+
+| Package | Use when |
+|---------|----------|
+| `NLog.Web.AspNetCore` | You want full ASP.NET Core integration including `${aspnet-*}` layout renderers (request path, user, session, etc.) |
+| `NLog.Extensions.Logging` | You only need NLog as an `ILoggerProvider` without ASP.NET-specific layout renderers |
+
+## Install packages
+
+<Tabs>
+  <Tab title="NLog.Web.AspNetCore (recommended)">
+    ```bash
+    dotnet add package NLog.Web.AspNetCore
+    ```
+  </Tab>
+  <Tab title="NLog.Extensions.Logging only">
+    ```bash
+    dotnet add package NLog.Extensions.Logging
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  `NLog.Web.AspNetCore` is a separate package maintained by the NLog project. It depends on `NLog.Extensions.Logging` and adds ASP.NET Core-specific layout renderers such as `${aspnet-request-url}`, `${aspnet-user-identity}`, and `${aspnet-session}`.
+</Note>
+
+## Configure in Program.cs
+
+<Tabs>
+  <Tab title=".NET 6+ (minimal hosting)">
+    Call `UseNLog()` on the host builder. This replaces the default logging providers with NLog:
+
+    ```csharp Program.cs
+    using NLog;
+    using NLog.Web;
+
+    // Load NLog config early so startup errors are captured
+    var logger = LogManager.Setup()
+        .LoadConfigurationFromAppSettings()
+        .GetCurrentClassLogger();
+
+    try
+    {
+        logger.Info("Application starting");
+
+        var builder = WebApplication.CreateBuilder(args);
+
+        // Replace default logging with NLog
+        builder.Host.UseNLog();
+
+        builder.Services.AddControllers();
+
+        var app = builder.Build();
+
+        app.MapControllers();
+        app.Run();
+    }
+    catch (Exception ex)
+    {
+        logger.Fatal(ex, "Application terminated unexpectedly");
+        throw;
+    }
+    finally
+    {
+        LogManager.Shutdown();
+    }
+    ```
+  </Tab>
+  <Tab title="ASP.NET Core 3.1 / .NET 5">
+    ```csharp Program.cs
+    using NLog.Web;
+
+    public class Program
+    {
+        public static void Main(string[] args)
+        {
+            var logger = NLog.LogManager.Setup()
+                .LoadConfigurationFromAppSettings()
+                .GetCurrentClassLogger();
+            try
+            {
+                logger.Info("Application starting");
+                CreateHostBuilder(args).Build().Run();
+            }
+            catch (Exception ex)
+            {
+                logger.Fatal(ex, "Application terminated unexpectedly");
+                throw;
+            }
+            finally
+            {
+                NLog.LogManager.Shutdown();
+            }
+        }
+
+        public static IHostBuilder CreateHostBuilder(string[] args) =>
+            Host.CreateDefaultBuilder(args)
+                .UseNLog()
+                .ConfigureWebHostDefaults(webBuilder =>
+                {
+                    webBuilder.UseStartup<Startup>();
+                });
+    }
+    ```
+  </Tab>
+  <Tab title="AddNLog() only">
+    If you only want to add NLog as an additional provider without removing the default providers:
+
+    ```csharp Program.cs
+    using NLog.Extensions.Logging;
+
+    var builder = WebApplication.CreateBuilder(args);
+
+    builder.Logging.AddNLog();
+
+    // ...
+    ```
+  </Tab>
+</Tabs>
+
+## NLog.config for ASP.NET Core
+
+```xml NLog.config
+<?xml version="1.0" encoding="utf-8" ?>
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      autoReload="true"
+      internalLogLevel="Warn"
+      internalLogFile="${basedir}/logs/nlog-internal.log">
+
+  <extensions>
+    <!-- Required for ${aspnet-*} layout renderers -->
+    <add assembly="NLog.Web.AspNetCore" />
+  </extensions>
+
+  <targets>
+    <target xsi:type="File" name="file"
+            fileName="${basedir}/logs/${shortdate}.log"
+            layout="${longdate} ${level:uppercase=true} ${aspnet-request-url} ${logger} ${message} ${exception:format=tostring}" />
+
+    <target xsi:type="Console" name="console"
+            layout="${longdate} ${level:uppercase=true} ${logger} ${message} ${exception:format=tostring}" />
+  </targets>
+
+  <rules>
+    <!-- Suppress noisy Microsoft framework logs below Warn -->
+    <logger name="Microsoft.*" maxlevel="Info" final="true" />
+    <logger name="System.Net.Http.*" maxlevel="Info" final="true" />
+    <logger name="*" minlevel="Debug" writeTo="file,console" />
+  </rules>
+
+</nlog>
+```
+
+## Inject ILogger through dependency injection
+
+When NLog is registered via `UseNLog()` or `AddNLog()`, ASP.NET Core's DI container injects `ILogger<T>` as normal. NLog routes those calls through its pipeline:
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+
+[ApiController]
+[Route("[controller]")]
+public class OrdersController : ControllerBase
+{
+    private readonly ILogger<OrdersController> _logger;
+
+    public OrdersController(ILogger<OrdersController> logger)
+    {
+        _logger = logger;
+    }
+
+    [HttpGet("{id}")]
+    public IActionResult GetOrder(int id)
+    {
+        _logger.LogInformation("Retrieving order {OrderId}", id);
+
+        // ...
+
+        return Ok();
+    }
+
+    [HttpPost]
+    public IActionResult CreateOrder(OrderRequest request)
+    {
+        using (_logger.BeginScope("CreateOrder {CorrelationId}", request.CorrelationId))
+        {
+            _logger.LogDebug("Creating order for customer {CustomerId}", request.CustomerId);
+            // ...
+            return Created($"/orders/{newId}", null);
+        }
+    }
+}
+```
+
+<Tip>
+  You can also use NLog's `Logger` class directly (`LogManager.GetCurrentClassLogger()`) alongside `ILogger<T>` in the same application. Both route through the same NLog configuration.
+</Tip>

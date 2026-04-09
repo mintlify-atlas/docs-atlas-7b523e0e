@@ -1,0 +1,130 @@
+---
+title: "Targets Overview"
+description: "NLog targets define where log messages are written. Learn about the built-in targets and how to configure them."
+---
+
+A **target** in NLog is the destination for log events. Every log message that passes through NLog's routing rules is written to one or more targets. Targets are responsible for the actual output — whether that's a file, the console, a database, a network socket, or any custom destination you define.
+
+Each target extends the abstract `Target` base class and is identified by a string name (set via the `xsi:type` attribute in XML configuration or the `[Target("...")]` attribute in code). All targets that produce formatted text output inherit from `TargetWithLayout` and expose a `layout` attribute.
+
+## Built-in Targets
+
+<CardGroup cols={2}>
+  <Card title="File" href="/targets/file">
+    Write log messages to files with rotation, archiving, and compression support. The most commonly used target for persistent logging.
+  </Card>
+  <Card title="Console" href="/targets/console">
+    Write log messages to standard output (`stdout`) or standard error (`stderr`). Supports header and footer layouts.
+  </Card>
+  <Card title="ColoredConsole" href="/targets/console#coloredconsole-target">
+    Write log messages to the console with per-level color highlighting. Supports custom row and word highlighting rules.
+  </Card>
+  <Card title="Database" href="/targets/database">
+    Write log messages to a relational database using ADO.NET. Requires the `NLog.Database` extension package.
+  </Card>
+  <Card title="EventLog" icon="windows">
+    Write log messages to the Windows Event Log. Supports specifying the source, log name, and event category.
+  </Card>
+  <Card title="MethodCall">
+    Invoke a static method for each log event, passing configured layout-rendered parameters. Useful for custom integrations.
+  </Card>
+  <Card title="Memory">
+    Collect formatted log messages in an in-memory `IList<string>`. Useful for testing and diagnostics.
+  </Card>
+  <Card title="Debugger">
+    Write log messages to the attached managed debugger via `System.Diagnostics.Debugger.Log`. Only active when a debugger is attached.
+  </Card>
+  <Card title="Null">
+    Discard all log messages. Useful for benchmarking the NLog pipeline or suppressing output for specific loggers.
+  </Card>
+</CardGroup>
+
+## Referencing Targets from Rules
+
+Targets are declared in the `<targets>` section of your NLog configuration and referenced by name in `<rules>`:
+
+```xml
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <targets>
+    <target xsi:type="File"
+            name="logfile"
+            fileName="${basedir}/logs/app.log"
+            layout="${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}" />
+
+    <target xsi:type="Console"
+            name="console"
+            layout="${level:uppercase=true}|${message}" />
+  </targets>
+
+  <rules>
+    <!-- All loggers at Debug and above write to the file -->
+    <logger name="*" minlevel="Debug" writeTo="logfile" />
+    <!-- All loggers at Info and above also write to the console -->
+    <logger name="*" minlevel="Info" writeTo="console" />
+  </rules>
+</nlog>
+```
+
+Multiple targets can be specified in the `writeTo` attribute as a comma-separated list:
+
+```xml
+<logger name="*" minlevel="Debug" writeTo="logfile,console" />
+```
+
+## Target Wrappers
+
+**Target wrappers** wrap an existing target and augment its behavior — adding asynchronous buffering, retry logic, filtering, fallback, rate limiting, and more — without changing the wrapped target's configuration.
+
+```xml
+<targets>
+  <target xsi:type="AsyncWrapper" name="asyncFile">
+    <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+  </target>
+</targets>
+```
+
+See the [Target Wrappers](/targets/wrappers) page for the full list and configuration options.
+
+## Enabling Async for All Targets
+
+A shorthand notation wraps every target in an `AsyncWrapper` by adding `async="true"` to the `<targets>` element:
+
+```xml
+<targets async="true">
+  <target xsi:type="File" name="logfile" fileName="${basedir}/logs/app.log" />
+  <target xsi:type="Console" name="console" />
+</targets>
+```
+
+## Extension Packages
+
+Some targets are distributed as separate NuGet packages rather than being included in the core `NLog` package:
+
+| Package | Targets |
+|---|---|
+| `NLog.Database` | `Database` — write to any ADO.NET-compatible database |
+| `NLog.Web.AspNetCore` | `AspNetCore`, enhanced scope context support |
+| `NLog.Extensions.Logging` | `MicrosoftILogger` — bridge to Microsoft.Extensions.Logging |
+| `NLog.WindowsEventLog` | `EventLog` — Windows Event Log target |
+| `NLog.Targets.Seq` | `Seq` — structured log server |
+| `NLog.Targets.ElasticSearch` | `ElasticSearch` — Elasticsearch target |
+
+Install extension packages with:
+
+```bash
+dotnet add package NLog.Database
+```
+
+Then register the extension in your NLog configuration:
+
+```xml
+<nlog>
+  <extensions>
+    <add assembly="NLog.Database" />
+  </extensions>
+  <targets>
+    <target xsi:type="Database" name="db" ... />
+  </targets>
+</nlog>
+```

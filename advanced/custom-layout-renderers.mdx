@@ -1,0 +1,249 @@
+---
+title: "Custom Layout Renderers"
+description: "Create your own layout renderers to embed custom values in log output."
+---
+
+Layout renderers are the `${...}` tokens inside layout strings. You can create your own to inject any value—ambient context, correlation IDs, feature flags, external state—directly into every log line.
+
+## Inheriting from `LayoutRenderer`
+
+Every custom layout renderer must inherit from `NLog.LayoutRenderers.LayoutRenderer` and implement the abstract `Append` method.
+
+```csharp
+using System.Text;
+using NLog;
+using NLog.LayoutRenderers;
+
+[LayoutRenderer("correlation-id")]
+public sealed class CorrelationIdLayoutRenderer : LayoutRenderer
+{
+    protected override void Append(StringBuilder builder, LogEventInfo logEvent)
+    {
+        builder.Append(CorrelationContext.CurrentId ?? string.Empty);
+    }
+}
+```
+
+Once registered, you use this renderer in any layout string:
+
+```
+${longdate}|${level}|${correlation-id}|${message}
+```
+
+## Applying the `[LayoutRenderer]` attribute
+
+`LayoutRendererAttribute` (from `NLog.LayoutRenderers`) binds a string alias to your class. The alias is the token name inside `${...}`, **without** the surrounding `${}`.
+
+```csharp
+// Makes the renderer available as ${my-renderer}
+[LayoutRenderer("my-renderer")]
+public sealed class MyRenderer : LayoutRenderer { ... }
+```
+
+The attribute supports `AllowMultiple = true`, so you can register the same class under several aliases.
+
+## Exposing configuration properties
+
+Public properties with getters and setters are automatically configurable from both XML config and the fluent API:
+
+```csharp
+[LayoutRenderer("correlation-id")]
+public sealed class CorrelationIdLayoutRenderer : LayoutRenderer
+{
+    /// <summary>Fallback value when no correlation ID is present.</summary>
+    public string DefaultValue { get; set; } = "-";
+
+    protected override void Append(StringBuilder builder, LogEventInfo logEvent)
+    {
+        builder.Append(CorrelationContext.CurrentId ?? DefaultValue);
+    }
+}
+```
+
+In a layout string, pass property values using the `property=value` syntax:
+
+```
+${correlation-id:defaultValue=n/a}
+```
+
+## Performance attributes
+
+### `[ThreadAgnostic]`
+
+Apply `[ThreadAgnostic]` when your renderer's output does not depend on which thread is calling it. NLog uses this hint to skip pre-calculating the layout value on the application thread and instead render it later (e.g., on the async writer thread). This increases concurrency when combined with `AsyncTargetWrapper`.
+
+```csharp
+using NLog.Config;
+using NLog.LayoutRenderers;
+
+[ThreadAgnostic]
+[LayoutRenderer("correlation-id")]
+public sealed class CorrelationIdLayoutRenderer : LayoutRenderer
+{
+    protected override void Append(StringBuilder builder, LogEventInfo logEvent)
+    {
+        builder.Append(CorrelationContext.CurrentId ?? string.Empty);
+    }
+}
+```
+
+<Note>
+Do **not** apply `[ThreadAgnostic]` if your renderer reads thread-local state (e.g., `HttpContext.Current`, `Thread.CurrentPrincipal`) because the value may be different or unavailable on another thread.
+</Note>
+
+### `[AppDomainFixedOutput]`
+
+Apply `[AppDomainFixedOutput]` when the renderer's output is constant for the lifetime of the process—for example, the machine name or application version. NLog can convert such a renderer to a literal string at configuration time, eliminating all per-event overhead.
+
+```csharp
+using NLog.Config;
+using NLog.LayoutRenderers;
+
+[ThreadAgnostic]
+[AppDomainFixedOutput]
+[LayoutRenderer("app-version")]
+public sealed class AppVersionLayoutRenderer : LayoutRenderer
+{
+    private static readonly string _version =
+        System.Reflection.Assembly.GetEntryAssembly()
+              ?.GetName().Version?.ToString() ?? "unknown";
+
+    protected override void Append(StringBuilder builder, LogEventInfo logEvent)
+    {
+        builder.Append(_version);
+    }
+}
+```
+
+`[AppDomainFixedOutput]` must be combined with `[ThreadAgnostic]`, otherwise it has no effect.
+
+## Lifecycle hooks
+
+Override `InitializeLayoutRenderer()` and `CloseLayoutRenderer()` for one-time setup and teardown:
+
+```csharp
+protected override void InitializeLayoutRenderer()
+{
+    // Called once when NLog activates this renderer.
+    // Open connections or initialise resources here.
+}
+
+protected override void CloseLayoutRenderer()
+{
+    // Called when NLog shuts down.
+    // Release resources here.
+}
+```
+
+## Complete example: correlation ID renderer
+
+This example reads a correlation ID stored in `AsyncLocal` and renders it in every log line.
+
+```csharp
+using System.Text;
+using System.Threading;
+using NLog;
+using NLog.Config;
+using NLog.LayoutRenderers;
+
+/// <summary>Static ambient context for the current correlation ID.</summary>
+public static class CorrelationContext
+{
+    private static readonly AsyncLocal<string?> _id = new AsyncLocal<string?>();
+
+    public static string? CurrentId
+    {
+        get => _id.Value;
+        set => _id.Value = value;
+    }
+}
+
+[ThreadAgnostic]
+[LayoutRenderer("correlation-id")]
+public sealed class CorrelationIdLayoutRenderer : LayoutRenderer
+{
+    /// <summary>Value rendered when no correlation ID is set. Default: <c>-</c></summary>
+    public string DefaultValue { get; set; } = "-";
+
+    protected override void Append(StringBuilder builder, LogEventInfo logEvent)
+    {
+        builder.Append(CorrelationContext.CurrentId ?? DefaultValue);
+    }
+}
+```
+
+Register it before loading configuration:
+
+```csharp
+LogManager.Setup()
+    .SetupExtensions(s => s.RegisterLayoutRenderer<CorrelationIdLayoutRenderer>("correlation-id"))
+    .LoadConfigurationFromFile("NLog.config");
+```
+
+Use it in a layout:
+
+```xml
+<target xsi:type="File"
+        name="file"
+        fileName="app.log"
+        layout="${longdate}|${level:uppercase=true}|${correlation-id}|${logger}|${message:withexception=true}" />
+```
+
+Set the correlation ID at the start of a request:
+
+```csharp
+CorrelationContext.CurrentId = Guid.NewGuid().ToString("N");
+logger.Info("Processing request");
+```
+
+Output:
+
+```
+2025-04-09 12:00:00.0000|INFO|a1b2c3d4e5f6...|MyApp.Api|Processing request
+```
+
+## Inline renderers with `FuncLayoutRenderer`
+
+For simple one-liners that do not need a dedicated class, register a delegate directly. The `LogManager.Setup().SetupExtensions()` API wraps the delegate in a `FuncLayoutRenderer` automatically.
+
+```csharp
+LogManager.Setup()
+    .SetupExtensions(s =>
+    {
+        // Thread-agnostic: safe to render on any thread
+        s.RegisterLayoutRenderer("machine-name",
+            logEvent => Environment.MachineName,
+            LayoutRenderOptions.ThreadAgnostic);
+
+        // Thread-sensitive: renders on the calling thread
+        s.RegisterLayoutRenderer("request-id",
+            logEvent => RequestContext.CurrentId ?? string.Empty);
+    });
+```
+
+You can then use `${machine-name}` and `${request-id}` in any layout string without writing a class.
+
+## Registering via XML `<extensions>`
+
+```xml
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <extensions>
+    <add assembly="MyApp.Logging" />
+  </extensions>
+
+  <targets>
+    <target xsi:type="File" name="file" fileName="app.log"
+            layout="${longdate}|${correlation-id}|${message}" />
+  </targets>
+
+  <rules>
+    <logger name="*" minlevel="Info" writeTo="file" />
+  </rules>
+</nlog>
+```
+
+<Warning>
+Assembly scanning is not compatible with .NET AOT or trimmed builds. Use the programmatic `SetupExtensions` API to register types explicitly in those scenarios.
+</Warning>

@@ -1,0 +1,300 @@
+---
+title: "LogManager"
+description: "The central manager for creating and managing NLog logger instances and configuration."
+---
+
+`LogManager` is a static class that wraps a singleton `LogFactory` instance. It is the main entry point for most NLog usage — getting loggers, loading configuration, and controlling global logging state.
+
+<Note>
+`LogManager` delegates all operations to the singleton `LogManager.LogFactory`. For advanced scenarios such as multiple isolated logging subsystems, use `LogFactory` directly.
+</Note>
+
+## Properties
+
+<ResponseField name="LogFactory" type="LogFactory">
+  The underlying singleton `LogFactory` instance used by `LogManager`. All static members delegate to this factory.
+
+  ```csharp
+  LogFactory factory = LogManager.LogFactory;
+  ```
+</ResponseField>
+
+<ResponseField name="Configuration" type="LoggingConfiguration?">
+  Gets or sets the current logging configuration. Assigning a new configuration automatically reconfigures all existing loggers — no need to call `ReconfigExistingLoggers()` separately.
+
+  ```csharp
+  // Assign a programmatic configuration
+  var config = new LoggingConfiguration();
+  LogManager.Configuration = config;
+
+  // Read the current configuration
+  LoggingConfiguration? current = LogManager.Configuration;
+  ```
+</ResponseField>
+
+<ResponseField name="GlobalThreshold" type="LogLevel">
+  Gets or sets the global minimum log level. Log events with a lower severity are discarded before reaching any target. Changing this value automatically reconfigures all existing loggers.
+
+  ```csharp
+  // Only log Warn and above globally
+  LogManager.GlobalThreshold = LogLevel.Warn;
+  ```
+</ResponseField>
+
+<ResponseField name="ThrowExceptions" type="bool">
+  Gets or sets whether NLog throws exceptions when an internal error occurs. Defaults to `false`. Enable during development to surface configuration problems early.
+
+  ```csharp
+  LogManager.ThrowExceptions = true;
+  ```
+</ResponseField>
+
+<ResponseField name="ThrowConfigExceptions" type="bool?">
+  Gets or sets whether `NLogConfigurationException` is thrown on configuration errors. When `null` (default), falls back to the value of `ThrowExceptions`.
+
+  ```csharp
+  LogManager.ThrowConfigExceptions = true;
+  ```
+</ResponseField>
+
+<ResponseField name="AutoShutdown" type="bool">
+  Gets or sets whether `Shutdown()` is called automatically on `AppDomain.Unload` or `AppDomain.ProcessExit`. Defaults to `true`.
+
+  ```csharp
+  LogManager.AutoShutdown = false; // Manage shutdown manually
+  ```
+</ResponseField>
+
+<ResponseField name="KeepVariablesOnReload" type="bool">
+  Gets or sets whether configuration variables set via the API are preserved across configuration reloads. Defaults to `true`.
+</ResponseField>
+
+---
+
+## Methods
+
+### Getting loggers
+
+<ResponseField name="GetCurrentClassLogger()" type="Logger">
+  Returns a logger whose name is the fully qualified name of the calling class (namespace + class name). Captures a stack frame to determine the caller, so avoid calling this in a tight loop.
+
+  ```csharp
+  // Typically called once as a static field
+  private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+  ```
+</ResponseField>
+
+<ResponseField name="GetLogger(string name)" type="Logger">
+  Returns a named logger. Multiple calls with the same name are not guaranteed to return the same instance, but the returned logger will always reflect the current configuration for that name.
+
+  <ParamField path="name" type="string" required>
+    The name of the logger. By convention this is a fully qualified class name, but any string is accepted.
+  </ParamField>
+
+  ```csharp
+  Logger logger = LogManager.GetLogger("MyApp.Services.OrderService");
+  ```
+</ResponseField>
+
+<ResponseField name="CreateNullLogger()" type="Logger">
+  Returns a logger that silently discards all log messages. Useful for disabling logging in tests or optional components.
+
+  ```csharp
+  Logger nullLogger = LogManager.CreateNullLogger();
+  ```
+</ResponseField>
+
+---
+
+### Fluent setup
+
+<ResponseField name="Setup()" type="ISetupBuilder">
+  Returns an `ISetupBuilder` for fluent configuration of the `LogFactory` before logging begins. This is the recommended way to configure NLog programmatically.
+
+  ```csharp
+  LogManager.Setup()
+      .SetupLogFactory(f => f.SetGlobalThreshold(LogLevel.Debug))
+      .LoadConfigurationFromFile("NLog.config");
+  ```
+</ResponseField>
+
+<ResponseField name="Setup(Action<ISetupBuilder> setupBuilder)" type="LogFactory">
+  Overload that accepts a configuration delegate and returns the `LogFactory`. Useful for inline configuration.
+
+  ```csharp
+  LogManager.Setup(s => s
+      .SetupLogFactory(f => f.SetThrowConfigExceptions(true))
+      .LoadConfigurationFromFile());
+  ```
+</ResponseField>
+
+---
+
+### Reloading and reconfiguring
+
+<ResponseField name="ReconfigExistingLoggers()" type="void">
+  Recalculates the target and filter list for all loggers that have previously been obtained via `GetLogger`. Call this after programmatically modifying `LogManager.Configuration`.
+
+  ```csharp
+  LogManager.Configuration.AddRuleForAllLevels(myTarget);
+  LogManager.ReconfigExistingLoggers();
+  ```
+</ResponseField>
+
+<ResponseField name="ReconfigExistingLoggers(bool purgeObsoleteLoggers)" type="void">
+  Same as `ReconfigExistingLoggers()` but additionally purges garbage-collected logger entries from the internal cache when `purgeObsoleteLoggers` is `true`.
+
+  <ParamField path="purgeObsoleteLoggers" type="bool" required>
+    Pass `true` to remove garbage-collected logger cache entries.
+  </ParamField>
+</ResponseField>
+
+---
+
+### Flushing
+
+<ResponseField name="Flush()" type="void">
+  Flushes any pending log messages in asynchronous targets, waiting up to 15 seconds (the default timeout).
+
+  ```csharp
+  LogManager.Flush();
+  ```
+</ResponseField>
+
+<ResponseField name="Flush(TimeSpan timeout)" type="void">
+  Flushes pending messages, waiting at most `timeout` before discarding remaining messages.
+
+  <ParamField path="timeout" type="TimeSpan" required>
+    Maximum time to allow for the flush.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="Flush(int timeoutMilliseconds)" type="void">
+  Flush overload accepting a timeout in milliseconds.
+
+  <ParamField path="timeoutMilliseconds" type="int" required>
+    Maximum time in milliseconds to allow for the flush.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="FlushAsync(CancellationToken cancellationToken)" type="Task">
+  Asynchronously flushes all pending log messages.
+
+  <ParamField path="cancellationToken" type="CancellationToken" required>
+    Token to cancel the flush operation.
+  </ParamField>
+
+  ```csharp
+  await LogManager.LogFactory.FlushAsync(CancellationToken.None);
+  ```
+
+  <Note>
+    `FlushAsync` is defined on `LogFactory`, not directly on the static `LogManager`. Access it via `LogManager.LogFactory.FlushAsync(...)`.
+  </Note>
+</ResponseField>
+
+---
+
+### Suspend and resume logging
+
+<ResponseField name="SuspendLogging()" type="IDisposable">
+  Temporarily suspends all logging and returns an `IDisposable` whose `Dispose()` calls `ResumeLogging()`. Logging is suspended as long as there are more `SuspendLogging()` calls than `ResumeLogging()` calls.
+
+  ```csharp
+  using (LogManager.SuspendLogging())
+  {
+      // No log messages are written in this block
+      PerformBulkOperation();
+  }
+  // Logging resumes here
+  ```
+</ResponseField>
+
+<ResponseField name="ResumeLogging()" type="void">
+  Resumes logging after a call to `SuspendLogging()`.
+</ResponseField>
+
+<ResponseField name="IsLoggingEnabled()" type="bool">
+  Returns `true` if logging is currently active (i.e., `SuspendLogging` has not been called more times than `ResumeLogging`).
+
+  ```csharp
+  if (LogManager.IsLoggingEnabled())
+  {
+      // Safe to log
+  }
+  ```
+</ResponseField>
+
+---
+
+### Shutdown
+
+<ResponseField name="Shutdown()" type="void">
+  Flushes all targets and closes the current configuration. After calling this, no further log events will be processed. Automatically called on process exit when `AutoShutdown` is `true`.
+
+  ```csharp
+  // In application teardown
+  LogManager.Shutdown();
+  ```
+</ResponseField>
+
+---
+
+## Events
+
+<ResponseField name="ConfigurationChanged" type="EventHandler<LoggingConfigurationChangedEventArgs>">
+  Raised when `Configuration` changes — either assigned to a new configuration or unloaded. `LoggingConfigurationChangedEventArgs.ActivatedConfiguration` is `null` when the configuration is unloaded at shutdown.
+
+  ```csharp
+  LogManager.ConfigurationChanged += (sender, args) =>
+  {
+      Console.WriteLine($"New config: {args.ActivatedConfiguration}");
+  };
+  ```
+</ResponseField>
+
+---
+
+## Common usage examples
+
+<CodeGroup>
+
+```csharp Static logger field (recommended)
+using NLog;
+
+public class OrderService
+{
+    private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+
+    public void PlaceOrder(Order order)
+    {
+        _logger.Info("Placing order {OrderId}", order.Id);
+    }
+}
+```
+
+```csharp Fluent programmatic setup
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
+LogManager.Setup()
+    .SetupLogFactory(f => f
+        .SetGlobalThreshold(LogLevel.Debug)
+        .SetThrowConfigExceptions(true))
+    .LoadConfiguration(c => c
+        .ForLogger()
+        .FilterMinLevel(LogLevel.Info)
+        .WriteTo(new ConsoleTarget("console")));
+
+var logger = LogManager.GetCurrentClassLogger();
+logger.Info("Application started");
+```
+
+```csharp Load from XML file
+LogManager.Setup().LoadConfigurationFromFile("NLog.config");
+Logger logger = LogManager.GetLogger("MyApp");
+logger.Debug("Ready");
+```
+
+</CodeGroup>

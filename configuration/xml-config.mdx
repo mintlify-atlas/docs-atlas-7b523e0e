@@ -1,0 +1,205 @@
+---
+title: "XML Configuration"
+description: "Configure NLog using an XML configuration file (NLog.config)."
+---
+
+NLog's XML configuration file gives you a human-readable, hot-reloadable way to control logging without recompiling. The file is named `NLog.config` by convention and is automatically detected at startup.
+
+## Complete example
+
+The following file demonstrates all major sections:
+
+```xml
+<?xml version="1.0" encoding="utf-8" ?>
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.nlog-project.org/schemas/NLog.xsd NLog.xsd"
+      autoReload="true"
+      throwConfigExceptions="true"
+      internalLogFile="${basedir}/logs/nlog-internal.log"
+      internalLogLevel="Warn">
+
+  <!-- Reusable variables -->
+  <variable name="logDir" value="${basedir}/logs" />
+  <variable name="archiveDir" value="${basedir}/logs/archive" />
+
+  <!-- Load extension assemblies that contain additional targets or layout renderers -->
+  <extensions>
+    <add assembly="NLog.Web.AspNetCore" />
+  </extensions>
+
+  <!-- Include a separate config fragment -->
+  <include file="${basedir}/nlog-targets.config" ignoreErrors="true" />
+
+  <!-- Target declarations -->
+  <targets>
+    <!-- Write formatted messages to a rolling file -->
+    <target xsi:type="File"
+            name="file"
+            fileName="${logDir}/app-${shortdate}.log"
+            layout="${longdate} ${uppercase:${level}} ${logger} ${message}${onexception:inner= ${exception:format=tostring}}"
+            archiveFileName="${archiveDir}/app-{#}.log"
+            archiveAboveSize="10485760"
+            maxArchiveFiles="10"
+            keepFileOpen="true"
+            encoding="utf-8" />
+
+    <!-- Write warnings and above to a dedicated error log -->
+    <target xsi:type="File"
+            name="errorFile"
+            fileName="${logDir}/errors-${shortdate}.log"
+            layout="${longdate} ${uppercase:${level}} ${logger} ${message}${newline}${exception:format=tostring}" />
+
+    <!-- Write to the console with colour support -->
+    <target xsi:type="ColoredConsole"
+            name="console"
+            layout="${time} ${uppercase:${level:-padding=-5}} ${logger:shortName=true} ${message}" />
+
+    <!-- Discard noisy trace output from third-party libraries -->
+    <target xsi:type="Null" name="blackhole" />
+  </targets>
+
+  <!-- Routing rules (evaluated top to bottom) -->
+  <rules>
+    <!-- Silence verbose Microsoft framework loggers -->
+    <logger name="Microsoft.*" maxlevel="Info" writeTo="blackhole" final="true" />
+    <logger name="System.Net.Http.*" maxlevel="Info" writeTo="blackhole" final="true" />
+
+    <!-- Route errors from anywhere to the error file -->
+    <logger name="*" minlevel="Error" writeTo="errorFile" />
+
+    <!-- Route everything Info and above to both file and console -->
+    <logger name="*" minlevel="Info" writeTo="file,console" />
+  </rules>
+</nlog>
+```
+
+## XML structure
+
+### `<nlog>` root element
+
+The document root. Key attributes:
+
+| Attribute | Description |
+|---|---|
+| `autoReload` | Watch the config file for changes and reload automatically (`true`/`false`). |
+| `throwExceptions` | Throw exceptions from NLog targets instead of swallowing them. Off by default. |
+| `throwConfigExceptions` | Throw exceptions caused by invalid configuration. Useful during development. |
+| `internalLogFile` | Path to write NLog's own diagnostic messages. |
+| `internalLogLevel` | Minimum severity for internal messages (`Trace`, `Debug`, `Info`, `Warn`, `Error`, `Fatal`). |
+
+### `<targets>` section
+
+Declare one or more `<target>` elements inside `<targets>`. Each target writes log events to a specific destination.
+
+```xml
+<targets>
+  <target xsi:type="Console" name="console" layout="${message}" />
+</targets>
+```
+
+Key target attributes:
+
+| Attribute | Description |
+|---|---|
+| `xsi:type` | The target type name (e.g. `File`, `Console`, `ColoredConsole`, `Database`, `Null`). |
+| `name` | A unique name used to reference this target from rules. |
+| `layout` | A layout string that controls how the log message is formatted. |
+
+### `<rules>` section
+
+Rules map loggers to targets. Each `<logger>` element is a rule, evaluated from top to bottom:
+
+```xml
+<rules>
+  <logger name="*" minlevel="Info" writeTo="console" />
+</rules>
+```
+
+Key rule attributes:
+
+| Attribute | Description |
+|---|---|
+| `name` | Logger name pattern. Supports `*` (zero or more characters) and `?` (exactly one character) wildcards. |
+| `minlevel` | Minimum log level. |
+| `maxlevel` | Maximum log level. |
+| `level` | A single exact level. |
+| `levels` | Comma-separated list of levels, e.g. `Debug,Error`. |
+| `writeTo` | Comma-separated list of target names. |
+| `final` | When `true`, stop evaluating further rules once this rule matches. |
+| `enabled` | Set to `false` to disable the rule without removing it. |
+
+## Variables
+
+Define reusable values with `<variable>` and reference them anywhere with `${varName}`:
+
+```xml
+<variable name="logDir" value="C:/logs/myapp" />
+<variable name="defaultLayout" value="${longdate} ${level} ${message}" />
+
+<targets>
+  <target xsi:type="File"
+          name="file"
+          fileName="${logDir}/app.log"
+          layout="${defaultLayout}" />
+</targets>
+```
+
+Variables can reference NLog layout renderers (like `${basedir}`) in their values.
+
+## Including other config files
+
+Split a large config into multiple files using `<include>`:
+
+```xml
+<include file="${basedir}/nlog-targets.config" />
+
+<!-- Silently skip the file if it doesn't exist -->
+<include file="${basedir}/nlog-overrides.config" ignoreErrors="true" />
+```
+
+The `ignoreErrors="true"` attribute prevents a startup failure when the file is absent — useful for optional environment-specific overrides.
+
+## Loading extension assemblies
+
+Register assemblies that provide additional NLog targets, layout renderers, or conditions:
+
+```xml
+<extensions>
+  <add assembly="NLog.Web.AspNetCore" />
+  <add assembly="NLog.Targets.ElasticSearch" />
+</extensions>
+```
+
+Extensions must be loaded before the `<targets>` section references any types they define.
+
+## Auto-reload
+
+Set `autoReload="true"` on the `<nlog>` root to have NLog watch the config file and reload without restarting the application:
+
+```xml
+<nlog autoReload="true">
+  ...
+</nlog>
+```
+
+<Note>
+  Log events produced during a reload may be lost while old targets are closed and new ones are initialised.
+</Note>
+
+## Error handling attributes
+
+<Tabs>
+  <Tab title="throwExceptions">
+    ```xml
+    <nlog throwExceptions="true">
+    ```
+    Causes NLog to re-throw exceptions from targets. Useful in unit tests. **Do not enable in production** — a broken target will crash your application.
+  </Tab>
+  <Tab title="throwConfigExceptions">
+    ```xml
+    <nlog throwConfigExceptions="true">
+    ```
+    Throws an exception when the configuration file cannot be parsed or contains invalid settings. Recommended during development to catch mistakes early.
+  </Tab>
+</Tabs>

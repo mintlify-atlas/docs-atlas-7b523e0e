@@ -1,0 +1,373 @@
+---
+title: "Logger / ILogger"
+description: "The primary interface for logging in NLog. Provides strongly typed methods for each log level."
+---
+
+`Logger` is the concrete logging class returned by `LogManager.GetLogger` and `LogManager.GetCurrentClassLogger`. It implements `ILogger`, which is the interface you should use in dependency injection scenarios and unit tests.
+
+<Tip>
+Store loggers as `static readonly` fields. `GetCurrentClassLogger()` captures a stack frame — avoid calling it in a loop.
+</Tip>
+
+---
+
+## Core properties
+
+<ResponseField name="Name" type="string">
+  The name of the logger, typically the fully qualified class name.
+
+  ```csharp
+  Logger logger = LogManager.GetCurrentClassLogger();
+  Console.WriteLine(logger.Name); // "MyApp.Services.OrderService"
+  ```
+</ResponseField>
+
+<ResponseField name="Factory" type="LogFactory">
+  The `LogFactory` instance that created this logger.
+</ResponseField>
+
+<ResponseField name="Properties" type="IDictionary<string, object?>">
+  A dictionary of context properties that are automatically appended to every log event produced by this logger instance. Prefer `WithProperty` over mutating this dictionary directly when the same logger is shared across threads or call sites.
+</ResponseField>
+
+---
+
+## Level-enabled properties
+
+Each property returns `true` when the corresponding level is enabled for this logger — taking into account both the active `LoggingRule` configuration and `LogManager.GlobalThreshold`.
+
+| Property | Level |
+|---|---|
+| `bool IsTraceEnabled` | Trace |
+| `bool IsDebugEnabled` | Debug |
+| `bool IsInfoEnabled` | Info |
+| `bool IsWarnEnabled` | Warn |
+| `bool IsErrorEnabled` | Error |
+| `bool IsFatalEnabled` | Fatal |
+
+```csharp
+if (_logger.IsDebugEnabled)
+{
+    // Construct expensive message only when debug is active
+    _logger.Debug("Result: {Result}", ComputeExpensiveResult());
+}
+```
+
+<ResponseField name="IsEnabled(LogLevel level)" type="bool">
+  Returns `true` if the specified level is currently enabled for this logger.
+
+  <ParamField path="level" type="LogLevel" required>
+    The log level to check.
+  </ParamField>
+
+  ```csharp
+  if (_logger.IsEnabled(LogLevel.Info))
+  {
+      _logger.Info("Service ready");
+  }
+  ```
+</ResponseField>
+
+---
+
+## Logging methods
+
+Every level (Trace, Debug, Info, Warn, Error, Fatal) exposes the same set of overloads. The examples below use `Info`; substitute any level name.
+
+### Basic overloads
+
+<ResponseField name="void Info(string message)" type="void">
+  Writes a plain string message.
+
+  ```csharp
+  _logger.Info("Application started");
+  ```
+</ResponseField>
+
+<ResponseField name="void Info<T>(T? value)" type="void">
+  Writes the string representation of a value using the default format provider.
+
+  <ParamField path="value" type="T?" required>
+    The value to log.
+  </ParamField>
+
+  ```csharp
+  _logger.Info(42);
+  _logger.Info(DateTime.UtcNow);
+  ```
+</ResponseField>
+
+<ResponseField name="void Info(LogMessageGenerator messageFunc)" type="void">
+  Accepts a `Func<string>` delegate. The delegate is only invoked when the Info level is enabled, avoiding unnecessary string allocation.
+
+  <ParamField path="messageFunc" type="LogMessageGenerator" required>
+    A delegate returning the message string.
+  </ParamField>
+
+  ```csharp
+  _logger.Info(() => $"State: {GetExpensiveState()}");
+  ```
+</ResponseField>
+
+---
+
+### Message template overloads
+
+<ResponseField name="void Info(string message, params object?[] args)" type="void">
+  Writes a message template with positional or named parameters. NLog supports both `string.Format`-style (`{0}`) and named (`{Name}`) placeholders.
+
+  <ParamField path="message" type="string" required>
+    Message template string.
+  </ParamField>
+  <ParamField path="args" type="object?[]" required>
+    Arguments to substitute into the template.
+  </ParamField>
+
+  ```csharp
+  _logger.Info("User {UserId} logged in from {IpAddress}", userId, ipAddress);
+  ```
+</ResponseField>
+
+<ResponseField name="void Info(IFormatProvider? formatProvider, string message, params object?[] args)" type="void">
+  Same as above but with an explicit `IFormatProvider` for culture-sensitive formatting.
+
+  <ParamField path="formatProvider" type="IFormatProvider?" required>
+    Culture-specific formatting information.
+  </ParamField>
+  <ParamField path="message" type="string" required>
+    Message template.
+  </ParamField>
+  <ParamField path="args" type="object?[]" required>
+    Template arguments.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="void Info<TArgument>(IFormatProvider? formatProvider, string message, TArgument? argument)" type="void">
+  Single-argument generic overload. Avoids `params object[]` boxing for common single-value scenarios.
+
+  <ParamField path="formatProvider" type="IFormatProvider?" required>
+    Culture-specific formatting information.
+  </ParamField>
+  <ParamField path="message" type="string" required>
+    Message template.
+  </ParamField>
+  <ParamField path="argument" type="TArgument?" required>
+    The argument to format.
+  </ParamField>
+</ResponseField>
+
+---
+
+### Exception overloads
+
+<ResponseField name="void Info(Exception? exception, string message)" type="void">
+  Writes a message with an associated exception. The exception comes **first**.
+
+  <ParamField path="exception" type="Exception?" required>
+    The exception to associate with the log event.
+  </ParamField>
+  <ParamField path="message" type="string" required>
+    Log message string.
+  </ParamField>
+
+  ```csharp
+  try { /* ... */ }
+  catch (Exception ex)
+  {
+      _logger.Error(ex, "Failed to process order");
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="void Info(Exception? exception, string message, params object?[] args)" type="void">
+  Writes a message template with arguments and an associated exception.
+
+  <ParamField path="exception" type="Exception?" required>
+    The exception to associate.
+  </ParamField>
+  <ParamField path="message" type="string" required>
+    Message template.
+  </ParamField>
+  <ParamField path="args" type="object?[]" required>
+    Template arguments.
+  </ParamField>
+
+  ```csharp
+  _logger.Error(ex, "Order {OrderId} failed at step {Step}", orderId, step);
+  ```
+</ResponseField>
+
+<ResponseField name="void Info(Exception? exception, IFormatProvider? formatProvider, string message, params object?[] args)" type="void">
+  Exception + format provider + message template overload.
+
+  <ParamField path="exception" type="Exception?" required>
+    The exception to associate.
+  </ParamField>
+  <ParamField path="formatProvider" type="IFormatProvider?" required>
+    Culture-specific formatting information.
+  </ParamField>
+  <ParamField path="message" type="string" required>
+    Message template.
+  </ParamField>
+  <ParamField path="args" type="object?[]" required>
+    Template arguments.
+  </ParamField>
+</ResponseField>
+
+<Warning>
+The pre-v4.3.11 overload `void Info(string message, Exception exception)` with exception as the **second** parameter is obsolete. Always use `void Info(Exception exception, string message)` with the exception first.
+</Warning>
+
+---
+
+### Generic Log method
+
+<ResponseField name="void Log(LogEventInfo logEvent)" type="void">
+  Writes a fully constructed `LogEventInfo` object. Use this when you need complete control over the log event, including custom timestamps or pre-populated properties.
+
+  ```csharp
+  var logEvent = new LogEventInfo(LogLevel.Warn, _logger.Name, "Custom event");
+  logEvent.Properties["RequestId"] = requestId;
+  _logger.Log(logEvent);
+  ```
+</ResponseField>
+
+<ResponseField name="void Log(Type wrapperType, LogEventInfo logEvent)" type="void">
+  Same as `Log(LogEventInfo)` but accepts a `wrapperType` used to resolve the correct call site when the logger is wrapped in a custom adapter.
+
+  <ParamField path="wrapperType" type="Type" required>
+    The type of the custom logger wrapper, used for call-site resolution.
+  </ParamField>
+  <ParamField path="logEvent" type="LogEventInfo" required>
+    The log event to write.
+  </ParamField>
+</ResponseField>
+
+---
+
+## LogEventBuilder factory methods
+
+`LogEventBuilder` provides a fluent API for constructing log events before writing them. These extension methods are defined in `ILoggerExtensions` and are available on any `ILogger`.
+
+| Method | Level |
+|---|---|
+| `logger.ForTraceEvent()` | Trace |
+| `logger.ForDebugEvent()` | Debug |
+| `logger.ForInfoEvent()` | Info |
+| `logger.ForWarnEvent()` | Warn |
+| `logger.ForErrorEvent()` | Error |
+| `logger.ForFatalEvent()` | Fatal |
+| `logger.ForLogEvent(LogLevel? level)` | Any level |
+| `logger.ForExceptionEvent(Exception, LogLevel?)` | Error (default) |
+
+```csharp
+_logger.ForInfoEvent()
+    .Message("Processing order {OrderId}", orderId)
+    .Property("UserId", userId)
+    .Property("Region", region)
+    .Log();
+
+_logger.ForErrorEvent()
+    .Exception(ex)
+    .Message("Failed to connect to {Host}", host)
+    .Log();
+```
+
+---
+
+## Context properties
+
+### WithProperty — immutable child logger
+
+<ResponseField name="Logger WithProperty(string propertyKey, object? propertyValue)" type="Logger">
+  Creates a **new** logger derived from the current one with the specified property automatically appended to all log events. The original logger is not modified. Prefer this over `Properties[key] = value` when the logger is shared across thread contexts.
+
+  <ParamField path="propertyKey" type="string" required>
+    The property name.
+  </ParamField>
+  <ParamField path="propertyValue" type="object?" required>
+    The property value.
+  </ParamField>
+
+  ```csharp
+  // Create a scoped logger for a specific request
+  Logger requestLogger = _logger.WithProperty("RequestId", requestId);
+  requestLogger.Info("Handling request");
+  ```
+</ResponseField>
+
+<ResponseField name="Logger WithProperties(IEnumerable<KeyValuePair<string, object?>> properties)" type="Logger">
+  Creates a new child logger with multiple properties appended.
+
+  ```csharp
+  var props = new Dictionary<string, object?>
+  {
+      ["RequestId"] = requestId,
+      ["UserId"] = userId
+  };
+  Logger scoped = _logger.WithProperties(props);
+  ```
+</ResponseField>
+
+---
+
+### Scope context helpers
+
+<ResponseField name="IDisposable PushScopeProperty(string propertyName, object? propertyValue)" type="IDisposable">
+  Pushes a property onto `ScopeContext` (the ambient log scope). The property is visible in all log events on the current logical call context until the returned `IDisposable` is disposed.
+
+  ```csharp
+  using (_logger.PushScopeProperty("CorrelationId", correlationId))
+  {
+      // All log events in this scope carry CorrelationId
+      _logger.Info("Starting pipeline");
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="IDisposable PushScopeNested<T>(T nestedState)" type="IDisposable">
+  Pushes a value onto the nested diagnostic context stack (NDC), accessible via `${ndlc}`.
+</ResponseField>
+
+---
+
+## Events
+
+<ResponseField name="event EventHandler<EventArgs> LoggerReconfigured" type="event">
+  Raised when the logger's configuration is updated, for example when `LogManager.Configuration` is reassigned or `ReconfigExistingLoggers()` is called.
+</ResponseField>
+
+---
+
+## Full example
+
+```csharp
+using NLog;
+
+public class PaymentProcessor
+{
+    private static readonly Logger _logger = LogManager.GetCurrentClassLogger();
+
+    public async Task ProcessPaymentAsync(string paymentId, decimal amount)
+    {
+        Logger log = _logger.WithProperty("PaymentId", paymentId);
+
+        log.Info("Starting payment of {Amount:C}", amount);
+
+        try
+        {
+            await SubmitToGatewayAsync(paymentId, amount);
+
+            log.ForInfoEvent()
+               .Message("Payment {PaymentId} completed")
+               .Property("Amount", amount)
+               .Log();
+        }
+        catch (GatewayException ex)
+        {
+            log.Error(ex, "Gateway rejected payment {PaymentId}", paymentId);
+            throw;
+        }
+    }
+}
+```

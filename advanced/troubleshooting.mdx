@@ -1,0 +1,243 @@
+---
+title: "Troubleshooting"
+description: "Diagnose and fix common NLog configuration and logging issues."
+---
+
+When NLog isn't behaving as expected, the first step is always to enable the internal logger. It captures NLog's own activity — config parsing errors, file access failures, and target initialization problems — independently of your application's logging.
+
+## Enable the internal logger
+
+<Tabs>
+  <Tab title="XML config">
+    ```xml NLog.config
+    <?xml version="1.0" encoding="utf-8" ?>
+    <nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          internalLogFile="nlog-internal.log"
+          internalLogLevel="Trace">
+      <!-- your targets and rules -->
+    </nlog>
+    ```
+  </Tab>
+  <Tab title="Programmatic">
+    ```csharp
+    using NLog.Common;
+
+    InternalLogger.LogFile = "nlog-internal.log";
+    InternalLogger.LogLevel = LogLevel.Trace;
+
+    // Do this BEFORE calling LogManager.Setup() or loading config
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+Set `internalLogLevel="Trace"` to capture the most detail. Switch to `Warn` in production if you want to keep the internal log enabled but reduce noise.
+</Tip>
+
+---
+
+## Common issues
+
+<AccordionGroup>
+
+<Accordion title="No log output — logs not appearing at all">
+Work through these checks in order:
+
+1. **Is `NLog.config` present?** It must exist in the application's working directory (usually alongside the executable). On Linux, the filename is case-sensitive.
+
+2. **Is it copied to the output directory?** In your `.csproj`:
+   ```xml
+   <ItemGroup>
+     <Content Include="NLog.config">
+       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+     </Content>
+   </ItemGroup>
+   ```
+
+3. **Is there a matching rule?** Every target must be referenced by at least one `<logger>` rule. A target declared in `<targets>` but not in any rule receives no events.
+
+4. **Does the rule level match?** If `minlevel="Warn"`, then `Debug` and `Info` events are silently dropped.
+
+5. **Check the internal log** for config parsing errors (see above).
+
+```xml NLog.config — minimal working config
+<?xml version="1.0" encoding="utf-8" ?>
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      internalLogFile="nlog-internal.log"
+      internalLogLevel="Trace">
+  <targets>
+    <target xsi:type="Console" name="console"
+            layout="${longdate} ${level} ${message} ${exception:format=tostring}" />
+  </targets>
+  <rules>
+    <logger name="*" minlevel="Trace" writeTo="console" />
+  </rules>
+</nlog>
+```
+</Accordion>
+
+<Accordion title="Last few log entries are missing">
+NLog buffers writes for performance. If the application exits without flushing, buffered entries are lost.
+
+Always call `LogManager.Shutdown()` at application exit:
+
+```csharp
+try
+{
+    // application logic
+}
+finally
+{
+    LogManager.Shutdown(); // flushes and closes all targets
+}
+```
+
+For async targets (`AsyncTargetWrapper`), you can also call `LogManager.Flush()` explicitly before shutdown.
+
+<Warning>
+Forgetting `LogManager.Shutdown()` is the most common reason for missing log entries at application exit, especially when using `AsyncTargetWrapper` or `BufferingTargetWrapper`.
+</Warning>
+</Accordion>
+
+<Accordion title="NLog.config file not found">
+NLog searches for `NLog.config` in these locations (in order):
+1. Application base directory
+2. Alongside the executing assembly
+
+To specify the path explicitly:
+
+```csharp
+LogManager.Setup().LoadConfigurationFromFile("path/to/NLog.config");
+```
+
+Or use an absolute path based on the app directory:
+
+```csharp
+var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NLog.config");
+LogManager.Setup().LoadConfigurationFromFile(configPath);
+```
+</Accordion>
+
+<Accordion title="Exception details not appearing in logs">
+You must use the overload that accepts an `Exception` as the **first** argument:
+
+```csharp
+try
+{
+    // ...
+}
+catch (Exception ex)
+{
+    // Correct — exception is first parameter
+    logger.Error(ex, "Failed to process order {OrderId}", orderId);
+
+    // Wrong — exception treated as a format argument
+    // logger.Error("Failed to process order {OrderId}: {Error}", orderId, ex);
+}
+```
+
+Your layout must also include `${exception}`:
+
+```xml
+layout="${longdate} ${level} ${message} ${exception:format=tostring}"
+```
+
+The `format=tostring` renders the full exception including inner exceptions and stack trace. Use `format=message` for just the message.
+</Accordion>
+
+<Accordion title="File target: file locking or sharing errors">
+If multiple processes need to write to the same log file, use the [`NLog.Targets.ConcurrentFile`](https://www.nuget.org/packages/NLog.Targets.ConcurrentFile) package which provides OS-level locking for safe multi-process writes. The built-in `FileTarget` does not support concurrent multi-process writes natively.
+
+For single-process scenarios where you want to reduce file handle contention, set `keepFileOpen="false"`:
+
+```xml
+<target xsi:type="File" name="logfile"
+        fileName="app.log"
+        keepFileOpen="false" />
+```
+
+<Note>
+Setting `keepFileOpen="false"` opens and closes the file on every write, which is safer for shared files but has lower performance than keeping the file open.
+</Note>
+</Accordion>
+
+<Accordion title="High CPU or memory usage">
+Common causes and fixes:
+
+- **`${callsite}` or `${stacktrace}` in hot paths** — these capture a stack trace on every log event. Remove them from high-frequency log rules or guard them with level checks.
+
+- **Synchronous file writes blocking threads** — wrap the file target with `AsyncTargetWrapper`:
+  ```xml
+  <target xsi:type="AsyncWrapper" name="async" queueLimit="10000" overflowAction="Discard">
+    <target xsi:type="File" name="logfile" fileName="app.log" />
+  </target>
+  ```
+
+- **Logging too verbosely in production** — set `minlevel="Info"` or `minlevel="Warn"` in production rules. Use `logger.IsDebugEnabled` guards before building expensive debug messages.
+</Accordion>
+
+<Accordion title="Configuration changes not taking effect">
+After modifying `LogManager.Configuration` programmatically, call:
+
+```csharp
+LogManager.ReconfigExistingLoggers();
+```
+
+To reload from the XML file at runtime:
+
+```csharp
+LogManager.Configuration = new XmlLoggingConfiguration("NLog.config");
+```
+
+You can also enable auto-reload in the XML config so it watches for file changes:
+
+```xml
+<nlog autoReload="true">
+  <!-- ... -->
+</nlog>
+```
+</Accordion>
+
+<Accordion title="Logs appearing in wrong format or missing properties">
+Check that:
+
+1. Your layout includes the renderers you expect: `${message}`, `${level}`, `${exception:format=tostring}`.
+
+2. For structured logging properties, use `${event-properties:item=PropertyName}` or `${all-event-properties}`.
+
+3. For scope context properties, use `${scopeproperty:name=Key}`.
+
+4. The layout is set on the correct target.
+
+Test your layout with a `MemoryTarget` to inspect the rendered output directly:
+
+```csharp
+var memTarget = new MemoryTarget { Layout = "${longdate} ${level} ${message} ${all-event-properties}" };
+LogManager.Setup().LoadConfiguration(c => c.ForLogger().WriteToTarget(memTarget));
+
+logger.Info("Hello {Name}", "World");
+
+Console.WriteLine(memTarget.Logs[0]); // inspect output
+```
+</Accordion>
+
+</AccordionGroup>
+
+## Useful resources
+
+<CardGroup cols={2}>
+  <Card title="Configuration Overview" icon="gear" href="/configuration/overview">
+    Review how NLog loads and applies configuration
+  </Card>
+  <Card title="Log Levels" icon="signal" href="/configuration/log-levels">
+    Understand level filtering and thresholds
+  </Card>
+  <Card title="Target Wrappers" icon="layer-group" href="/targets/wrappers">
+    Use async and buffering wrappers for better performance
+  </Card>
+  <Card title="Extending NLog" icon="puzzle-piece" href="/advanced/extending-nlog">
+    Build custom targets and renderers
+  </Card>
+</CardGroup>

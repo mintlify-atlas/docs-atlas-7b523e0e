@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "NLog",
+  "projectType": "sdk-library",
+  "projectName": "NLog",
+  "projectDescription": "A flexible, high-performance logging library for .NET that supports structured logging, rich log routing, and multiple output targets across all major .NET platforms.",
   "theme": "maple",
-  "colors": {
-    "primary": "#e16f2f",
-    "light": "#f6e3d8",
-    "dark": "#040404"
-  },
-  "favicon": "https://media.brand.dev/279b8e24-df4f-4777-895d-d044be9a652c.png",
-  "logo": {
-    "light": "https://media.brand.dev/5d6b95ae-bc46-44eb-918c-b5556e9893b8.png",
-    "dark": "https://media.brand.dev/5d6b95ae-bc46-44eb-918c-b5556e9893b8.png"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/NLog/NLog"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/NLog/NLog"
-    }
-  },
+  "primaryColor": "#e16f2f",
+  "lightColor": "#f6e3d8",
+  "darkColor": "#040404",
   "navigation": {
     "tabs": [
       {
@@ -103,5 +86,50 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Structured logging with message templates",
+    "Rich log routing with logging rules and filters",
+    "Multiple built-in targets (File, Console, EventLog, Database, etc.)",
+    "Flexible layout system with 60+ layout renderers",
+    "XML and programmatic configuration",
+    "AOT (Ahead-of-Time) compilation compatible",
+    "Cross-platform: .NET 6-10, .NET Standard 2.0/2.1, .NET Framework 3.5-4.8, Xamarin, Mono",
+    "Target wrapper support (async, buffering, retry, fallback, filtering)",
+    "ScopeContext for contextual logging (similar to log4j2 ThreadContext)",
+    "Extensible via custom targets, layout renderers, and conditions"
+  ],
+  "publicApiSurface": [
+    "LogManager.GetCurrentClassLogger()",
+    "LogManager.GetLogger(string name)",
+    "LogManager.Configuration",
+    "ILogger (Trace, Debug, Info, Warn, Error, Fatal methods)",
+    "Logger (concrete implementation of ILogger)",
+    "LogFactory",
+    "LogLevel (Trace, Debug, Info, Warn, Error, Fatal, Off)",
+    "LogEventInfo",
+    "LogEventBuilder",
+    "ScopeContext.PushProperty(string key, object value)",
+    "ScopeContext.PushNestedState(object state)",
+    "XmlLoggingConfiguration",
+    "LoggingConfiguration",
+    "LoggingRule",
+    "Target (base class)",
+    "FileTarget",
+    "ConsoleTarget",
+    "ColoredConsoleTarget",
+    "TargetWithLayout",
+    "TargetWithContext",
+    "Layout",
+    "SimpleLayout",
+    "JsonLayout",
+    "CsvLayout",
+    "XmlLayout",
+    "LayoutRenderer (base class)",
+    "NullLogger",
+    "GlobalDiagnosticsContext (GDC)",
+    "MappedDiagnosticsContext (MDC)",
+    "NestedDiagnosticsContext (NDC)",
+    "LogManager.Setup() (fluent setup API)"
+  ]
 }

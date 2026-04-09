@@ -1,0 +1,56 @@
+---
+title: "Introduction"
+description: "NLog is a flexible, high-performance logging library for .NET that supports structured and traditional logging."
+---
+
+NLog is a free logging platform for .NET with rich log routing and management capabilities. It makes it easy to produce and manage high-quality logs for your application regardless of its size or complexity.
+
+NLog handles both structured logging and traditional logging from any .NET language, lets you augment events with contextual information, format them according to your preference, and send them to one or more targets such as files, consoles, databases, or cloud services.
+
+## Supported platforms
+
+NLog targets a broad range of .NET runtimes without any additional dependencies:
+
+- **.NET 6, 7, 8, 9, and 10**
+- **.NET Standard 2.0 and 2.1**
+- **.NET Framework 3.5 through 4.8**
+- **Xamarin Android + iOS** (via .NET Standard)
+- **Mono 4**
+- **MAUI** (via .NET Standard)
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Structured logging" icon="brackets-curly">
+    Log structured data using message templates with `{Property}` syntax. Structured properties are captured alongside the message and can be queried independently by compatible targets and log management systems.
+  </Card>
+  <Card title="Targets" icon="bullseye">
+    The core NLog package ships with file and console targets. Dozens of additional targets are available as NuGet packages, covering databases, email, cloud services (Azure, AWS), syslog, and more.
+  </Card>
+  <Card title="Layout renderers" icon="code">
+    Layout renderers let you compose log output using tokens such as `${longdate}`, `${level}`, `${message}`, `${exception}`, `${callsite}`, and many more. ASP.NET-specific renderers are available via `NLog.Web.AspNetCore`.
+  </Card>
+  <Card title="AOT and trimming support" icon="bolt">
+    NLog 6.0 is compatible with .NET Native AOT and supports trimming. The library is marked `IsAotCompatible` and `IsTrimmable` for .NET 6+ and .NET Standard 2.1 targets.
+  </Card>
+  <Card title="Extensibility" icon="puzzle">
+    Create custom targets, layout renderers, filters, and conditions by implementing NLog's extension interfaces. Extensions can be registered programmatically or discovered automatically via the `extensions` config element.
+  </Card>
+  <Card title="Auto-reload configuration" icon="arrows-rotate">
+    NLog can watch its XML configuration file for changes and reload logging rules at runtime without restarting your application, controlled by the `autoReload` attribute.
+  </Card>
+</CardGroup>
+
+## Get started
+
+Head to the [Quickstart](/quickstart) to install NLog and write your first log messages in minutes.
+
+Platform-specific guides are also available:
+
+- [.NET Framework](/getting-started/dotnet-framework)
+- [ASP.NET Core](/getting-started/aspnet-core)
+- [.NET Console Application](/getting-started/dotnet-console)
+
+## License
+
+NLog is open-source software released under the **BSD-3-Clause** license. See the [LICENSE.txt](https://github.com/NLog/NLog/blob/master/LICENSE.txt) file in the repository for the full license text.

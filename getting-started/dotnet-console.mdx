@@ -1,0 +1,215 @@
+---
+title: ".NET Console Application"
+description: "Use NLog in a modern .NET console application."
+---
+
+This guide covers setting up NLog in a .NET 6+ console application using the fluent `LogManager.Setup()` API.
+
+<Steps>
+  <Step title="Install NLog">
+    ```bash
+    dotnet add package NLog
+    ```
+
+    For `appsettings.json` support, also install `NLog.Extensions.Logging`:
+
+    ```bash
+    dotnet add package NLog.Extensions.Logging
+    ```
+  </Step>
+
+  <Step title="Create NLog.config">
+    Add `NLog.config` to your project root and set **Copy to Output Directory** to `Copy if newer`:
+
+    ```xml NLog.config
+    <?xml version="1.0" encoding="utf-8" ?>
+    <nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          autoReload="true">
+
+      <targets>
+        <target xsi:type="Console" name="console"
+                layout="${longdate} ${level:uppercase=true} ${logger} ${message} ${exception:format=tostring}" />
+
+        <target xsi:type="File" name="file"
+                fileName="${basedir}/logs/${shortdate}.log"
+                layout="${longdate} ${level:uppercase=true} ${logger} ${message} ${exception:format=tostring}" />
+      </targets>
+
+      <rules>
+        <logger name="*" minlevel="Debug" writeTo="console,file" />
+      </rules>
+
+    </nlog>
+    ```
+  </Step>
+
+  <Step title="Load configuration and get a logger">
+    Use `LogManager.Setup().LoadConfigurationFromFile()` to explicitly load the configuration:
+
+    ```csharp Program.cs
+    using NLog;
+
+    // Load NLog.config from the current directory (default search path)
+    var logger = LogManager.Setup()
+        .LoadConfigurationFromFile("NLog.config")
+        .GetCurrentClassLogger();
+
+    try
+    {
+        logger.Info("Application starting");
+
+        // Application logic here
+        DoWork(logger);
+
+        logger.Info("Application finished successfully");
+    }
+    catch (Exception ex)
+    {
+        logger.Fatal(ex, "Application terminated unexpectedly");
+        throw;
+    }
+    finally
+    {
+        // Flush and dispose all targets — important for async targets and file targets
+        LogManager.Shutdown();
+    }
+
+    static void DoWork(Logger log)
+    {
+        log.Debug("Starting work");
+        log.Info("Work completed for {Item}", "example-item");
+    }
+    ```
+
+    <Note>
+      `LogManager.Setup()` returns an `ISetupBuilder` for fluent configuration. Multiple setup calls can be chained before calling `GetCurrentClassLogger()` or `GetLogger()`.
+    </Note>
+  </Step>
+
+  <Step title="(Optional) Load from appsettings.json">
+    If your application already uses `Microsoft.Extensions.Configuration` with `appsettings.json`, you can configure NLog there instead of (or in addition to) `NLog.config`.
+
+    Install the integration package:
+
+    ```bash
+    dotnet add package NLog.Extensions.Logging
+    ```
+
+    Add an `NLog` section to `appsettings.json`:
+
+    ```json appsettings.json
+    {
+      "NLog": {
+        "throwConfigExceptions": true,
+        "targets": {
+          "console": {
+            "type": "Console",
+            "layout": "${longdate} ${level:uppercase=true} ${logger} ${message} ${exception:format=tostring}"
+          },
+          "file": {
+            "type": "File",
+            "fileName": "logs/${shortdate}.log",
+            "layout": "${longdate} ${level:uppercase=true} ${logger} ${message} ${exception:format=tostring}"
+          }
+        },
+        "rules": [
+          { "logger": "*", "minLevel": "Debug", "writeTo": "console,file" }
+        ]
+      }
+    }
+    ```
+
+    Load it in `Program.cs`:
+
+    ```csharp Program.cs
+    using Microsoft.Extensions.Configuration;
+    using NLog;
+    using NLog.Extensions.Logging;
+
+    var config = new ConfigurationBuilder()
+        .SetBasePath(Directory.GetCurrentDirectory())
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+        .Build();
+
+    var logger = LogManager.Setup()
+        .LoadConfigurationFromSection(config)
+        .GetCurrentClassLogger();
+
+    try
+    {
+        logger.Info("Application starting");
+        // ...
+    }
+    finally
+    {
+        LogManager.Shutdown();
+    }
+    ```
+  </Step>
+
+  <Step title="Flush logs on exit">
+    Always call `LogManager.Shutdown()` before your process exits. This flushes any pending messages in asynchronous targets (such as a `BufferingWrapper` or database target) and disposes all targets cleanly:
+
+    ```csharp
+    // Using a try/finally ensures Shutdown is called even on unhandled exceptions
+    try
+    {
+        // ... application code ...
+    }
+    finally
+    {
+        LogManager.Shutdown();
+    }
+    ```
+
+    Alternatively, use the `using` pattern with `LogManager.Setup()` — the returned `ISetupBuilder` is `IDisposable` and calls `Shutdown` on dispose:
+
+    ```csharp
+    using var factory = LogManager.Setup().LoadConfigurationFromFile("NLog.config");
+    var logger = factory.GetCurrentClassLogger();
+
+    logger.Info("Application starting");
+    // ... application code ...
+    // Shutdown is called automatically when 'factory' goes out of scope
+    ```
+
+    <Warning>
+      Skipping `LogManager.Shutdown()` may cause the last batch of log messages to be lost when using asynchronous or buffering targets.
+    </Warning>
+  </Step>
+</Steps>
+
+## Complete example
+
+```csharp Program.cs
+using NLog;
+
+var logger = LogManager.Setup()
+    .LoadConfigurationFromFile("NLog.config")
+    .GetCurrentClassLogger();
+
+try
+{
+    logger.Info("Console app starting, version={Version}", "1.0.0");
+
+    for (int i = 1; i <= 5; i++)
+    {
+        logger.Debug("Processing item {Index}", i);
+
+        if (i == 3)
+            logger.Warn("Item {Index} requires special handling", i);
+    }
+
+    logger.Info("Processing complete");
+}
+catch (Exception ex)
+{
+    logger.Fatal(ex, "Application terminated unexpectedly");
+    Environment.ExitCode = 1;
+}
+finally
+{
+    LogManager.Shutdown();
+}
+```

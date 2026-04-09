@@ -1,0 +1,300 @@
+---
+title: "Target Wrappers"
+description: "Enhance target behavior with async buffering, retry, fallback, filtering, and more using target wrappers."
+---
+
+**Target wrappers** are special targets that wrap one or more existing targets and modify how log events are delivered. They add cross-cutting behavior — asynchronous buffering, retries, fallback, filtering, rate limiting — without changing the inner target's configuration.
+
+All wrappers live in the `NLog.Targets.Wrappers` namespace and are declared in the `<targets>` section using `xsi:type`.
+
+## How Wrappers Work
+
+A wrapper intercepts log events before they reach the inner target. Single-target wrappers use a `<target>` child element; group (compound) wrappers like `FallbackGroup` and `SplitGroup` take multiple `<target>` children.
+
+```xml
+<target xsi:type="AsyncWrapper" name="asyncFile">
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+</target>
+```
+
+In code, pass the wrapped target to the wrapper's constructor:
+
+```csharp
+var fileTarget = new NLog.Targets.FileTarget("logfile")
+{
+    FileName = "${basedir}/logs/app.log"
+};
+
+var asyncWrapper = new NLog.Targets.Wrappers.AsyncTargetWrapper("asyncFile", fileTarget);
+```
+
+---
+
+## AsyncWrapper
+
+`AsyncTargetWrapper` queues log events and writes them on a dedicated background thread, so application threads are never blocked by I/O.
+
+```xml
+<target xsi:type="AsyncWrapper"
+        name="asyncFile"
+        queueLimit="10000"
+        overflowAction="Discard"
+        batchSize="200"
+        timeToSleepBetweenBatches="1">
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+</target>
+```
+
+<ParamField path="queueLimit" type="int" default="10000">
+  Maximum number of log events that can be held in the queue before `overflowAction` is triggered.
+</ParamField>
+
+<ParamField path="overflowAction" type="AsyncTargetWrapperOverflowAction" default="Discard">
+  Action taken when the queue is full.
+
+  - `Discard` — drop the new event (default).
+  - `Grow` — expand the queue without limit.
+  - `Block` — block the calling thread until space is available.
+</ParamField>
+
+<ParamField path="batchSize" type="int" default="200">
+  Number of log events processed per background-thread iteration.
+</ParamField>
+
+<ParamField path="timeToSleepBetweenBatches" type="int" default="1">
+  Milliseconds to sleep between batches. Values ≤ 1 mean the thread wakes on new activity rather than polling.
+</ParamField>
+
+<ParamField path="fullBatchSizeWriteLimit" type="int" default="10">
+  Number of full batches to write before yielding into `timeToSleepBetweenBatches`. Improves throughput for small frequent writes.
+</ParamField>
+
+### Shorthand: Wrap All Targets
+
+Add `async="true"` to `<targets>` to automatically wrap every declared target in an `AsyncWrapper`:
+
+```xml
+<targets async="true">
+  <target xsi:type="File" name="logfile" fileName="${basedir}/logs/app.log" />
+  <target xsi:type="Console" name="console" />
+</targets>
+```
+
+---
+
+## BufferingWrapper
+
+`BufferingTargetWrapper` accumulates log events in a buffer and flushes them to the wrapped target in a single batch — either when the buffer is full or after a timeout elapses.
+
+```xml
+<target xsi:type="BufferingWrapper"
+        name="bufferedFile"
+        bufferSize="100"
+        flushTimeout="5000"
+        overflowAction="Flush">
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+</target>
+```
+
+<ParamField path="bufferSize" type="Layout&lt;int&gt;" default="100">
+  Maximum number of log events to hold before the buffer is flushed.
+</ParamField>
+
+<ParamField path="flushTimeout" type="Layout&lt;int&gt;" default="-1">
+  Milliseconds of inactivity after which the buffer is flushed regardless of size. `-1` disables timed flushing.
+</ParamField>
+
+<ParamField path="slidingTimeout" type="bool" default="true">
+  When `true`, the inactivity timer resets on each write. When `false`, the timer starts from the first buffered event.
+</ParamField>
+
+<ParamField path="overflowAction" type="BufferingTargetWrapperOverflowAction" default="Flush">
+  Action when the buffer reaches `bufferSize`.
+
+  - `Flush` — flush the buffer to the wrapped target before adding the new event (default).
+  - `Discard` — replace the oldest buffered event without flushing.
+</ParamField>
+
+---
+
+## RetryingWrapper
+
+`RetryingTargetWrapper` retries failed writes to the wrapped target with a configurable delay between attempts.
+
+```xml
+<target xsi:type="RetryingWrapper"
+        name="retryFile"
+        retryCount="3"
+        retryDelayMilliseconds="100">
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+</target>
+```
+
+<ParamField path="retryCount" type="Layout&lt;int&gt;" default="3">
+  Number of retry attempts after an initial failure.
+</ParamField>
+
+<ParamField path="retryDelayMilliseconds" type="Layout&lt;int&gt;" default="100">
+  Milliseconds to wait between retry attempts.
+</ParamField>
+
+<ParamField path="enableBatchWrite" type="bool" default="true">
+  When `true`, a single delay is applied for an entire failed batch rather than per event.
+</ParamField>
+
+<Warning>
+Retrying blocks the writing thread for `retryCount × retryDelayMilliseconds` milliseconds on each failure. Combine with `AsyncWrapper` to avoid blocking application threads.
+</Warning>
+
+---
+
+## FallbackGroupTarget
+
+`FallbackGroupTarget` tries each listed target in order, moving to the next one if a write fails. This is useful for ensuring delivery when the primary destination is temporarily unavailable.
+
+```xml
+<target xsi:type="FallbackGroup"
+        name="failoverTargets"
+        returnToFirstOnSuccess="true">
+  <target xsi:type="Database"
+          name="primaryDb"
+          connectionString="..." />
+  <target xsi:type="File"
+          name="fallbackFile"
+          fileName="${basedir}/logs/fallback.log" />
+</target>
+```
+
+<ParamField path="returnToFirstOnSuccess" type="bool" default="false">
+  When `true`, the next successful write resets the active target back to the first one in the list.
+</ParamField>
+
+---
+
+## FilteringTargetWrapper
+
+`FilteringTargetWrapper` passes log events to the wrapped target only when a NLog condition expression evaluates to `true`.
+
+```xml
+<target xsi:type="FilteringWrapper"
+        name="warnAndAbove">
+  <filter defaultAction="Ignore">
+    <when condition="level >= LogLevel.Warn" action="Log" />
+  </filter>
+  <target xsi:type="File" fileName="${basedir}/logs/warnings.log" />
+</target>
+```
+
+<ParamField path="condition" type="ConditionExpression">
+  A NLog condition expression. When it evaluates to `true`, the event is forwarded to the wrapped target.
+</ParamField>
+
+---
+
+## SplitGroupTarget
+
+`SplitGroupTarget` forwards every log event to **all** listed targets simultaneously. Use it to fan out to multiple destinations at once.
+
+```xml
+<target xsi:type="SplitGroup" name="splitOutput">
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+  <target xsi:type="Console" />
+</target>
+```
+
+---
+
+## RoundRobinGroupTarget
+
+`RoundRobinGroupTarget` distributes log events across its targets in a round-robin sequence. Each successive event goes to the next target in the list.
+
+```xml
+<target xsi:type="RoundRobinGroup" name="roundRobin">
+  <target xsi:type="File" fileName="${basedir}/logs/app1.log" />
+  <target xsi:type="File" fileName="${basedir}/logs/app2.log" />
+  <target xsi:type="File" fileName="${basedir}/logs/app3.log" />
+</target>
+```
+
+---
+
+## LimitingTargetWrapper
+
+`LimitingTargetWrapper` caps the number of messages forwarded to the wrapped target within a rolling time interval. Events received after the limit is reached are silently discarded until the next interval begins.
+
+```xml
+<target xsi:type="LimitingWrapper"
+        name="rateLimited"
+        messageLimit="1000"
+        interval="00:01:00">
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+</target>
+```
+
+<ParamField path="messageLimit" type="Layout&lt;int&gt;" default="1000">
+  Maximum number of messages to forward per `interval`.
+</ParamField>
+
+<ParamField path="interval" type="Layout&lt;TimeSpan&gt;" default="01:00:00">
+  The time window within which `messageLimit` is enforced. Format: `hh:mm:ss`.
+</ParamField>
+
+---
+
+## AutoFlushTargetWrapper
+
+`AutoFlushTargetWrapper` triggers a flush on the wrapped target after each write (or after writes matching a specific condition). This is useful for ensuring critical events are persisted immediately, such as after an error.
+
+```xml
+<target xsi:type="AutoFlushWrapper"
+        name="autoFlushErrors">
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" autoFlush="false" />
+</target>
+```
+
+---
+
+## PostFilteringTargetWrapper
+
+`PostFilteringTargetWrapper` buffers a sliding window of log events and decides which to forward based on conditions evaluated over the **entire group**. This enables dynamic filtering — for example, only writing verbose debug logs when an error is present in the same time window.
+
+```xml
+<target xsi:type="PostFilteringWrapper" name="postFilter">
+  <!-- Default: only forward Info and above -->
+  <defaultFilter>level >= LogLevel.Info</defaultFilter>
+  <!-- But if any Warn/Error/Fatal is in the buffer, forward everything >= Debug -->
+  <when exists="level >= LogLevel.Warn" filter="level >= LogLevel.Debug" />
+  <target xsi:type="File" fileName="${basedir}/logs/app.log" />
+</target>
+```
+
+<ParamField path="defaultFilter" type="ConditionExpression">
+  The condition applied to each event when no `<when>` rule matches the buffer.
+</ParamField>
+
+The `<when>` element has two attributes:
+- `exists` — a condition that, if **any** buffered event satisfies it, activates this rule.
+- `filter` — the condition applied to each event in the buffer when the rule is active.
+
+---
+
+## Combining Wrappers
+
+Wrappers can be nested. A common pattern is to combine `RetryingWrapper` and `AsyncWrapper` so retries happen on the background thread without blocking the application:
+
+```xml
+<targets>
+  <target xsi:type="AsyncWrapper" name="asyncRetryDb" queueLimit="10000" overflowAction="Discard">
+    <target xsi:type="RetryingWrapper" retryCount="3" retryDelayMilliseconds="500">
+      <target xsi:type="Database"
+              dbProvider="Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient"
+              connectionString="Server=myserver;Database=Logs;Integrated Security=true;"
+              commandText="INSERT INTO Logs (Logged, Level, Message) VALUES (@logged, @level, @message)">
+        <parameter name="@logged"  layout="${date}" />
+        <parameter name="@level"   layout="${level}" />
+        <parameter name="@message" layout="${message}" />
+      </target>
+    </target>
+  </target>
+</targets>
+```

@@ -1,0 +1,259 @@
+---
+title: "LoggingConfiguration"
+description: "Represents the NLog configuration including all targets and logging rules."
+---
+
+`LoggingConfiguration` holds the complete NLog configuration for a `LogFactory`: the registered targets and the `LoggingRule` list that controls routing. You build one programmatically and assign it to `LogManager.Configuration` (or `LogFactory.Configuration`), or it is created automatically when loading from an XML file.
+
+<Note>
+`LoggingConfiguration` is thread-safe. Target and rule collections are protected internally by locks.
+</Note>
+
+---
+
+## Constructors
+
+<ResponseField name="LoggingConfiguration()" type="LoggingConfiguration">
+  Creates a new empty configuration bound to `LogManager.LogFactory` (the default singleton factory).
+
+  ```csharp
+  var config = new LoggingConfiguration();
+  ```
+</ResponseField>
+
+<ResponseField name="LoggingConfiguration(LogFactory logFactory)" type="LoggingConfiguration">
+  Creates a new empty configuration bound to the specified `LogFactory`.
+
+  <ParamField path="logFactory" type="LogFactory" required>
+    The factory that will own this configuration.
+  </ParamField>
+
+  ```csharp
+  var factory = new LogFactory();
+  var config  = new LoggingConfiguration(factory);
+  factory.Configuration = config;
+  ```
+</ResponseField>
+
+---
+
+## Properties
+
+<ResponseField name="LogFactory" type="LogFactory">
+  The `LogFactory` this configuration is bound to.
+</ResponseField>
+
+<ResponseField name="LoggingRules" type="IList<LoggingRule>">
+  The ordered list of logging rules. Rules are evaluated in order; the first matching rule's targets receive the event unless `Final` is set.
+
+  ```csharp
+  // Inspect existing rules
+  foreach (var rule in config.LoggingRules)
+      Console.WriteLine(rule);
+  ```
+</ResponseField>
+
+<ResponseField name="ConfiguredNamedTargets" type="ReadOnlyCollection<Target>">
+  A snapshot of all named targets registered with this configuration.
+</ResponseField>
+
+<ResponseField name="AllTargets" type="ReadOnlyCollection<Target>">
+  All targets registered with this configuration, including unnamed wrapper targets referenced by `_configItems`.
+</ResponseField>
+
+<ResponseField name="Variables" type="IDictionary<string, Layout>">
+  Key-value variables accessible from XML and layout renderers via `${var:name}`. Names are case-insensitive.
+
+  ```csharp
+  config.Variables["AppName"] = new SimpleLayout("MyApp");
+  ```
+</ResponseField>
+
+<ResponseField name="DefaultCultureInfo" type="CultureInfo?">
+  Default culture used when formatting log event messages. Inherits from the factory when not set explicitly.
+</ResponseField>
+
+---
+
+## Managing targets
+
+<ResponseField name="AddTarget(Target target)" type="void">
+  Registers a target using its `Target.Name` property as the key. The name must not be null or empty.
+
+  <ParamField path="target" type="Target" required>
+    The target to register.
+  </ParamField>
+
+  ```csharp
+  var fileTarget = new FileTarget("file") { FileName = "app.log" };
+  config.AddTarget(fileTarget);
+  ```
+</ResponseField>
+
+<ResponseField name="AddTarget(string name, Target target)" type="void">
+  Registers a target under an explicit name (can differ from `target.Name`).
+
+  <ParamField path="name" type="string" required>
+    The alias under which to register the target.
+  </ParamField>
+  <ParamField path="target" type="Target" required>
+    The target object.
+  </ParamField>
+
+  ```csharp
+  config.AddTarget("myFile", fileTarget);
+  ```
+</ResponseField>
+
+<ResponseField name="FindTargetByName(string name)" type="Target?">
+  Looks up a registered target by name. Returns `null` if not found.
+
+  <ParamField path="name" type="string" required>
+    The target name to look up.
+  </ParamField>
+
+  ```csharp
+  Target? target = config.FindTargetByName("file");
+  ```
+</ResponseField>
+
+<ResponseField name="FindTargetByName<TTarget>(string name)" type="TTarget?">
+  Typed overload. Returns the target cast to `TTarget`, or `null` if not found or not of that type. Also unwraps one or two levels of `WrapperTargetBase` when searching.
+
+  <ParamField path="name" type="string" required>
+    The target name.
+  </ParamField>
+
+  ```csharp
+  FileTarget? fileTarget = config.FindTargetByName<FileTarget>("file");
+  ```
+</ResponseField>
+
+---
+
+## Managing rules
+
+<ResponseField name="AddRule(minLevel, maxLevel, target, loggerNamePattern)" type="void">
+  Adds a logging rule that routes events from loggers matching `loggerNamePattern`, with severity between `minLevel` and `maxLevel`, to `target`. The target is also automatically registered.
+
+  <ParamField path="minLevel" type="LogLevel" required>
+    Minimum severity (inclusive).
+  </ParamField>
+  <ParamField path="maxLevel" type="LogLevel" required>
+    Maximum severity (inclusive).
+  </ParamField>
+  <ParamField path="target" type="Target" required>
+    The destination target.
+  </ParamField>
+  <ParamField path="loggerNamePattern" type="string">
+    Logger name pattern. Supports `*` (zero or more characters) and `?` wildcards. Defaults to `"*"` (all loggers).
+  </ParamField>
+
+  ```csharp
+  config.AddRule(LogLevel.Info, LogLevel.Fatal, consoleTarget);
+  config.AddRule(LogLevel.Warn, LogLevel.Fatal, fileTarget, "MyApp.Services.*");
+  ```
+</ResponseField>
+
+<ResponseField name="AddRule(LogLevel minLevel, LogLevel maxLevel, Target target, string loggerNamePattern, bool final)" type="void">
+  Same as above but with the `final` flag. When `true`, rule evaluation stops after this rule matches a logger name.
+
+  <ParamField path="final" type="bool" required>
+    If `true`, stops processing further rules for matching loggers.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="AddRule(LoggingRule rule)" type="void">
+  Adds a pre-constructed `LoggingRule` object. All targets in the rule are also registered.
+
+  <ParamField path="rule" type="LoggingRule" required>
+    The rule to add.
+  </ParamField>
+
+  ```csharp
+  var rule = new LoggingRule("MyApp.*", LogLevel.Debug, LogLevel.Fatal, target);
+  rule.Final = true;
+  config.AddRule(rule);
+  ```
+</ResponseField>
+
+<ResponseField name="AddRuleForAllLevels(target, loggerNamePattern)" type="void">
+  Convenience method that adds a rule for all logging levels (Trace through Fatal).
+
+  <ParamField path="target" type="Target" required>
+    The destination target.
+  </ParamField>
+  <ParamField path="loggerNamePattern" type="string">
+    Logger name pattern. Defaults to `"*"`.
+  </ParamField>
+
+  ```csharp
+  config.AddRuleForAllLevels(consoleTarget);
+  ```
+</ResponseField>
+
+<ResponseField name="AddRuleForOneLevel(level, target, loggerNamePattern)" type="void">
+  Adds a rule that matches exactly one log level.
+
+  <ParamField path="level" type="LogLevel" required>
+    The single level to match.
+  </ParamField>
+  <ParamField path="target" type="Target" required>
+    The destination target.
+  </ParamField>
+  <ParamField path="loggerNamePattern" type="string">
+    Logger name pattern. Defaults to `"*"`.
+  </ParamField>
+
+  ```csharp
+  // Send only Fatal events to a dedicated target
+  config.AddRuleForOneLevel(LogLevel.Fatal, alertTarget);
+  ```
+</ResponseField>
+
+---
+
+## XmlLoggingConfiguration
+
+`XmlLoggingConfiguration` (subclass of `LoggingConfiguration`) loads configuration from an XML file.
+
+```csharp
+// Preferred: load via Setup fluent API
+LogManager.Setup().LoadConfigurationFromFile("NLog.config");
+
+// Alternative: assign directly
+LogManager.Configuration = new XmlLoggingConfiguration("NLog.config");
+```
+
+---
+
+## Full programmatic example
+
+```csharp
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
+var config = new LoggingConfiguration();
+
+// Targets
+var console = new ConsoleTarget("console")
+{
+    Layout = "${longdate} ${level:uppercase=true} ${logger} ${message}${exception:format=ToString}"
+};
+var file = new FileTarget("file")
+{
+    FileName = "${basedir}/logs/${shortdate}.log",
+    Layout = "${longdate} ${level} ${logger} ${message}${exception:format=ToString}"
+};
+
+// Rules
+config.AddRuleForAllLevels(console);
+config.AddRule(LogLevel.Warn, LogLevel.Fatal, file);
+
+// Activate
+LogManager.Configuration = config;
+
+var logger = LogManager.GetCurrentClassLogger();
+logger.Info("Configuration loaded");
+```

@@ -1,0 +1,106 @@
+---
+title: "Configuration Overview"
+description: "Learn how to configure NLog using XML files or programmatic C# configuration."
+---
+
+NLog supports two primary approaches to configuration: a declarative **XML config file** and a **programmatic C# API**. Both approaches are fully featured — choose the one that fits your deployment model and team preferences.
+
+## Two approaches to configuration
+
+<CardGroup cols={2}>
+  <Card title="XML Configuration" icon="file-code" href="/configuration/xml-config">
+    Declare targets and rules in an `NLog.config` file. Changes can be picked up at runtime without redeploying your application.
+  </Card>
+  <Card title="Programmatic Configuration" icon="code" href="/configuration/programmatic-config">
+    Build the logging configuration directly in C# using the fluent `LogManager.Setup()` API. Ideal for applications that generate config dynamically or prefer code-only setups.
+  </Card>
+</CardGroup>
+
+## Auto-detection of NLog.config
+
+When your application starts, NLog automatically searches a set of candidate paths for an `NLog.config` file. If one is found, it is loaded without any explicit code.
+
+Candidate paths searched (in order) include:
+
+- The application base directory (`AppDomain.BaseDirectory`)
+- The directory containing the entry assembly
+- The current working directory
+
+<Note>
+  Auto-detection only fires if no configuration has already been assigned to `LogManager.Configuration`. If your application sets configuration programmatically before the first logger is created, auto-detection is skipped.
+</Note>
+
+## Loading config explicitly
+
+You can load a specific config file at startup using the fluent setup API:
+
+```csharp
+LogManager.Setup().LoadConfigurationFromFile("path/to/NLog.config");
+```
+
+To make the file optional (so the application still runs if the file is missing):
+
+```csharp
+LogManager.Setup().LoadConfigurationFromFile("NLog.config", optional: true);
+```
+
+You can also load configuration from an inline XML string:
+
+```csharp
+LogManager.Setup().LoadConfigurationFromXml(@"
+<nlog>
+  <targets><target name=""console"" xsi:type=""Console"" /></targets>
+  <rules><logger name=""*"" minlevel=""Info"" writeTo=""console"" /></rules>
+</nlog>");
+```
+
+## Config file location and naming conventions
+
+NLog looks for files named `NLog.config` by default. On .NET Framework applications, it also checks `app.config` / `web.config` for an `<nlog>` configuration section.
+
+Recommended placement:
+
+| Project type | Recommended location |
+|---|---|
+| Console / Worker | Project root (copied to output directory) |
+| ASP.NET Core | Project root alongside `appsettings.json` |
+| Class library | Provided by the consuming application |
+
+<Tip>
+  Set the file's **Copy to Output Directory** property to `Copy if newer` in Visual Studio so `NLog.config` is always available next to your executable.
+</Tip>
+
+## Setting configuration directly
+
+You can assign a `LoggingConfiguration` object directly to `LogManager.Configuration`. This immediately reconfigures all existing logger instances:
+
+```csharp
+var config = new LoggingConfiguration();
+// ... add targets and rules ...
+LogManager.Configuration = config;
+```
+
+## Diagnosing configuration issues with InternalLog
+
+NLog's internal logger writes diagnostic messages about configuration loading, target initialization, and rule evaluation. Enable it to troubleshoot why logging is not behaving as expected.
+
+In XML:
+
+```xml
+<nlog internalLogFile="nlog-internal.log" internalLogLevel="Debug">
+  ...
+</nlog>
+```
+
+In code:
+
+```csharp
+LogManager.Setup()
+    .SetupInternalLogger(il => il
+        .SetMinimumLevel(NLog.Common.InternalLogLevel.Debug)
+        .LogToFile("nlog-internal.log"));
+```
+
+<Warning>
+  The internal logger writes synchronously and bypasses NLog's normal pipeline. Disable it in production or set the level to `Warn` or higher to avoid overhead.
+</Warning>

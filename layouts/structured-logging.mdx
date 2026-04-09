@@ -1,0 +1,216 @@
+---
+title: "Structured logging"
+description: "Log structured data with message templates so log properties can be queried and analyzed."
+---
+
+Structured logging captures named **properties** alongside the log message, rather than embedding values as plain text. Instead of writing a string like `"Processing order 42 for customer 99"`, you record the message template `"Processing order {OrderId} for customer {CustomerId}"` plus the values `OrderId=42` and `CustomerId=99` as separate, queryable fields.
+
+This distinction matters when logs are shipped to tools like [Seq](https://datalust.co/seq), Elasticsearch, or Splunk: those tools can filter by `OrderId == 42` rather than running a full-text search.
+
+## Message template syntax
+
+NLog supports a message template dialect closely aligned with the [Serilog message template](https://messagetemplates.org/) specification. Template parameters are named holes enclosed in `{braces}`.
+
+```csharp
+// Template: "Processing order {OrderId} for customer {CustomerId}"
+logger.Info("Processing order {OrderId} for customer {CustomerId}", orderId, customerId);
+```
+
+NLog stores:
+- `LogEventInfo.FormattedMessage` → `"Processing order 42 for customer 99"` (the rendered string)
+- `LogEventInfo.Properties["OrderId"]` → `42` (the raw typed value)
+- `LogEventInfo.Properties["CustomerId"]` → `99`
+
+### Why templates beat string interpolation
+
+```csharp
+// String interpolation — loses structure, value baked into the string
+logger.Info($"Processing order {orderId} for customer {customerId}");
+
+// Message template — preserves named properties for querying
+logger.Info("Processing order {OrderId} for customer {CustomerId}", orderId, customerId);
+```
+
+Both produce the same rendered text, but only the template version allows log aggregators to index and filter on `OrderId` and `CustomerId` individually.
+
+## Destructuring with `@`
+
+Prefix a parameter name with `@` to **destructure** an object — NLog serializes the object's properties into the log event rather than calling `ToString()`.
+
+```csharp
+var order = new Order { Id = 42, Total = 199.99m, Status = "Pending" };
+
+logger.Info("Order placed: {@Order}", order);
+```
+
+`LogEventInfo.Properties["Order"]` will contain the `Order` instance. When rendered by `JsonLayout` or `${event-properties:item=Order:format=@json}`, the object is serialized as a nested JSON structure.
+
+<Tip>
+Use `@` for complex objects you want to query by their fields. Avoid it for large collections or deeply nested graphs — set `maxRecursionLimit` on `JsonLayout` to control depth.
+</Tip>
+
+## Stringification with `$`
+
+Prefix a parameter name with `$` to **force string conversion** — NLog calls `ToString()` on the value and stores the resulting string rather than the raw object.
+
+```csharp
+logger.Info("User {$UserName} logged in", userObject);
+// Stores: Properties["UserName"] = userObject.ToString()
+```
+
+## Accessing properties in layouts
+
+Use `${event-properties:item=PropertyName}` to render a captured property in any layout string:
+
+```
+${event-properties:item=OrderId}
+${event-properties:item=CustomerId}
+```
+
+You can also render all properties at once with `${all-event-properties}`:
+
+```
+${longdate} ${level} ${message} | ${all-event-properties}
+```
+
+Output:
+
+```
+2025-01-15 12:34:56.7890 Info Processing order 42 for customer 99 | OrderId=42, CustomerId=99
+```
+
+## Outputting structured JSON with JsonLayout
+
+For structured log pipelines, use `JsonLayout` with `includeEventProperties="true"` to include all captured properties as JSON fields.
+
+```xml NLog.config
+<targets>
+  <target name="structured" xsi:type="File" fileName="logs/structured.json">
+    <layout xsi:type="JsonLayout" includeEventProperties="true" includeScopeProperties="true">
+      <attribute name="timestamp" layout="${date:format=o:universalTime=true}" />
+      <attribute name="level"     layout="${level:lowercase=true}" />
+      <attribute name="logger"    layout="${logger}" />
+      <attribute name="message"   layout="${message}" />
+      <attribute name="exception" layout="${exception:format=tostring}" />
+    </layout>
+  </target>
+</targets>
+```
+
+A call like:
+
+```csharp
+logger.Info("Processing order {OrderId} for customer {CustomerId}", 42, 99);
+```
+
+Produces:
+
+```json
+{
+  "timestamp": "2025-01-15T12:34:56.7890000Z",
+  "level": "info",
+  "logger": "MyApp.OrderService",
+  "message": "Processing order 42 for customer 99",
+  "exception": "",
+  "OrderId": 42,
+  "CustomerId": 99
+}
+```
+
+## Using LogEventBuilder for fluent property setting
+
+`LogEventBuilder` provides a fluent API for constructing log events with explicit properties, without using message template syntax:
+
+```csharp
+logger.ForInfoEvent()
+      .Message("Processing order")
+      .Property("OrderId", orderId)
+      .Property("CustomerId", customerId)
+      .Log();
+```
+
+You can also set properties directly on a `LogEventInfo`:
+
+```csharp
+var logEvent = LogEventInfo.Create(LogLevel.Info, logger.Name, "Processing order");
+logEvent.Properties["OrderId"] = orderId;
+logEvent.Properties["CustomerId"] = customerId;
+logger.Log(logEvent);
+```
+
+## Structured logging in practice
+
+<Steps>
+  <Step title="Replace interpolated strings with templates">
+    Change `$"User {userId} logged in"` to `"User {UserId} logged in", userId`. Use PascalCase property names so they appear consistently in log queries.
+  </Step>
+  <Step title="Configure JsonLayout on your target">
+    Add a `JsonLayout` with `includeEventProperties="true"` to your file or network target. This ensures all captured properties flow through to the JSON output.
+  </Step>
+  <Step title="Add scope context for ambient properties">
+    Push ambient properties (correlation ID, user ID, tenant ID) via `ScopeContext.PushProperty()` in your request pipeline. Use `includeScopeProperties="true"` on `JsonLayout` to include them automatically.
+
+    ```csharp
+    using (ScopeContext.PushProperty("CorrelationId", HttpContext.TraceIdentifier))
+    {
+        // All log events written here include CorrelationId
+        logger.Info("Processing order {OrderId}", orderId);
+    }
+    ```
+  </Step>
+  <Step title="Ship logs to an aggregator">
+    Point a `NetworkTarget` or third-party NLog target (e.g., `NLog.Targets.Seq`, `NLog.Targets.ElasticSearch`) at your log aggregator. The JSON output from step 2 maps directly to structured fields in the aggregator's index.
+  </Step>
+</Steps>
+
+## Differences from `string.Format` parameters
+
+NLog supports two parameter modes. Which one is active depends on whether the message string contains `{Named}` holes:
+
+| Mode | Syntax | Properties stored |
+|---|---|---|
+| Message templates | `"Order {OrderId} placed"`, `orderId` | `Properties["OrderId"] = orderId` |
+| Positional (`string.Format`) | `"Order {0} placed"`, `orderId` | No properties stored |
+
+Always use named holes in `{PascalCase}` to enable structured logging. Positional holes are treated as `string.Format` arguments and do not populate `LogEventInfo.Properties`.
+
+<Note>
+NLog's message template support does not require any additional packages. It is built into `NLog.dll` starting from NLog 4.5.
+</Note>
+
+## Integration with log aggregation tools
+
+<Tabs>
+  <Tab title="Seq">
+    Install the `NLog.Targets.Seq` package and configure a `Seq` target. `JsonLayout` is not required — the Seq target handles structured output natively.
+
+    ```xml NLog.config
+    <target name="seq" xsi:type="Seq" serverUrl="http://localhost:5341" apiKey="your-api-key" />
+    ```
+
+    ```csharp
+    // Properties are forwarded directly as Seq structured events
+    logger.Info("Processing order {OrderId}", orderId);
+    ```
+  </Tab>
+  <Tab title="Elasticsearch">
+    Use `NLog.Targets.ElasticSearch` or ship `JsonLayout` output via a file beat / logstash pipeline.
+
+    ```xml NLog.config
+    <target name="es" xsi:type="File" fileName="logs/app.json">
+      <layout xsi:type="JsonLayout" includeEventProperties="true">
+        <attribute name="@timestamp" layout="${date:format=o:universalTime=true}" />
+        <attribute name="level"      layout="${level:lowercase=true}" />
+        <attribute name="message"    layout="${message}" />
+      </layout>
+    </target>
+    ```
+  </Tab>
+  <Tab title="Application Insights">
+    Use the `Microsoft.ApplicationInsights.NLogTarget` package. It forwards NLog structured properties to Application Insights custom dimensions automatically.
+
+    ```xml NLog.config
+    <target name="ai" xsi:type="ApplicationInsightsTarget" />
+    ```
+  </Tab>
+</Tabs>

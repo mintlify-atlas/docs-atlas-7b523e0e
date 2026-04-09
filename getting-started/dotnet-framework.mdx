@@ -1,0 +1,150 @@
+---
+title: ".NET Framework"
+description: "Set up NLog in a .NET Framework application."
+---
+
+NLog supports .NET Framework 3.5 through 4.8. The core NLog package includes everything needed for file and console logging with no additional dependencies.
+
+## Install NLog
+
+<Tabs>
+  <Tab title="Package Manager Console">
+    ```powershell
+    Install-Package NLog
+    ```
+  </Tab>
+  <Tab title="dotnet CLI">
+    ```bash
+    dotnet add package NLog
+    ```
+  </Tab>
+  <Tab title="PackageReference">
+    ```xml
+    <PackageReference Include="NLog" Version="6.*" />
+    ```
+  </Tab>
+</Tabs>
+
+## Add NLog.config
+
+Add an `NLog.config` file to your project root. Right-click the file in Solution Explorer, open **Properties**, and set **Copy to Output Directory** to `Copy if newer`.
+
+```xml NLog.config
+<?xml version="1.0" encoding="utf-8" ?>
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      autoReload="true"
+      internalLogLevel="Warn"
+      internalLogFile="${basedir}/logs/nlog-internal.log">
+
+  <targets>
+    <target xsi:type="Console" name="console"
+            layout="${longdate} ${level:uppercase=true} ${logger} ${message} ${exception:format=tostring}" />
+
+    <target xsi:type="File" name="file"
+            fileName="${basedir}/logs/${shortdate}.log"
+            layout="${longdate} ${level:uppercase=true} ${callsite} ${message} ${exception:format=tostring}" />
+  </targets>
+
+  <rules>
+    <logger name="*" minlevel="Debug" writeTo="console,file" />
+  </rules>
+
+</nlog>
+```
+
+NLog automatically searches for `NLog.config` next to the application executable. No additional registration is required for console or Windows Forms apps.
+
+## Console application example
+
+```csharp
+using NLog;
+
+class Program
+{
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
+    static void Main(string[] args)
+    {
+        Logger.Info("Application starting");
+
+        try
+        {
+            Run();
+        }
+        catch (Exception ex)
+        {
+            Logger.Fatal(ex, "Application terminated unexpectedly");
+        }
+        finally
+        {
+            // Flush and close all targets before the process exits
+            LogManager.Shutdown();
+        }
+    }
+
+    static void Run()
+    {
+        Logger.Debug("Running main logic");
+        // ...
+    }
+}
+```
+
+## Web application (ASP.NET MVC / Web Forms)
+
+For ASP.NET applications running on .NET Framework, NLog can be loaded through the `web.config` config section or automatically from `NLog.config`.
+
+### Optional: register NLog config section in web.config
+
+```xml web.config
+<configuration>
+  <configSections>
+    <section name="nlog"
+             type="NLog.Config.ConfigSectionHandler, NLog"
+             requirePermission="false" />
+  </configSections>
+
+  <!-- NLog configuration can be embedded here or left in NLog.config -->
+
+</configuration>
+```
+
+<Note>
+  Embedding the NLog configuration directly inside `web.config` via the `<nlog>` section is optional. NLog will find a standalone `NLog.config` file in the application root automatically.
+</Note>
+
+### Controller usage
+
+```csharp
+using NLog;
+using System.Web.Mvc;
+
+public class HomeController : Controller
+{
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
+    public ActionResult Index()
+    {
+        Logger.Info("Index action invoked");
+        return View();
+    }
+}
+```
+
+## Troubleshooting with internal logging
+
+When NLog is not producing output as expected, enable its internal log to diagnose configuration problems:
+
+```xml NLog.config
+<nlog internalLogLevel="Debug"
+      internalLogFile="${basedir}/logs/nlog-internal.log">
+  ...
+</nlog>
+```
+
+The internal log records errors such as missing target types, file permission problems, or malformed layouts. Disable it (or set `internalLogLevel="Off"`) in production.
+
+<Warning>
+  The internal log file is written by NLog itself outside of the normal target pipeline. Do not route the internal log to an NLog target — this can cause infinite recursion.
+</Warning>

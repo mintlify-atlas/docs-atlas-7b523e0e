@@ -1,0 +1,100 @@
+---
+title: "Extending NLog"
+description: "NLog is fully extensible. Learn how to create custom targets, layout renderers, conditions, and filters."
+---
+
+NLog exposes well-defined extension points that let you plug in custom behavior at every layer of the logging pipeline—from how messages are written to how they are formatted.
+
+## Extension points
+
+| Extension type | Base class / interface | Purpose |
+|---|---|---|
+| **Target** | `Target`, `TargetWithLayout` | Send log events to a custom destination |
+| **Layout renderer** | `LayoutRenderer` | Embed custom values inside layout strings |
+| **Layout** | `Layout` | Produce a fully custom formatted string |
+| **Condition** | Static method + `[ConditionMethod]` | Add custom expressions to logging rules |
+| **Filter** | `Filter` | Accept or reject log events before they reach a target |
+| **Time source** | `TimeSource` | Override how NLog obtains the current timestamp |
+
+## Discovering extensions
+
+NLog must be told about your custom types before it can use them in configuration. There are two ways to do this.
+
+### XML `<extensions>` element
+
+Add an `<extensions>` block in `NLog.config` to point NLog at your assembly. NLog scans the assembly for types decorated with the appropriate NLog attributes (`[Target]`, `[LayoutRenderer]`, etc.).
+
+```xml
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <extensions>
+    <add assembly="MyExtensions" />
+  </extensions>
+
+  <targets>
+    <target xsi:type="MyTarget" name="my" />
+  </targets>
+
+  <rules>
+    <logger name="*" minlevel="Info" writeTo="my" />
+  </rules>
+</nlog>
+```
+
+<Warning>
+Assembly scanning uses reflection and is **incompatible with .NET AOT / trimming**. Prefer the programmatic API when publishing with `PublishAot=true` or `PublishTrimmed=true`.
+</Warning>
+
+### Programmatic registration via `LogManager.Setup()`
+
+Call `SetupExtensions` before loading any configuration. This is the recommended approach and is fully AOT-safe.
+
+```csharp
+LogManager.Setup()
+    .SetupExtensions(s =>
+    {
+        s.RegisterTarget<MyTarget>("MyTarget");
+        s.RegisterLayoutRenderer<MyRenderer>("my-renderer");
+        s.RegisterLayoutRenderer("correlation-id", logEvent =>
+            CorrelationContext.CurrentId ?? string.Empty);
+    })
+    .LoadConfigurationFromFile("NLog.config");
+```
+
+You can also register an entire assembly at once:
+
+```csharp
+LogManager.Setup()
+    .SetupExtensions(s => s.RegisterAssembly(typeof(MyTarget).Assembly));
+```
+
+### Auto-discovery
+
+Set `autoLoadExtensions="true"` on the `<nlog>` element (or call `AutoLoadExtensions()`) to have NLog scan all assemblies in the application's base directory for NLog extension types. This is **disabled by default** because the startup scan can be slow.
+
+```xml
+<nlog autoLoadExtensions="true">
+  ...
+</nlog>
+```
+
+```csharp
+LogManager.Setup()
+    .SetupExtensions(s => s.AutoLoadExtensions());
+```
+
+<Note>
+Auto-discovery is not compatible with AOT or trimmed builds. Use explicit `RegisterTarget` / `RegisterLayoutRenderer` calls in those scenarios.
+</Note>
+
+## Learn more
+
+<CardGroup cols={2}>
+  <Card title="Custom Targets" href="/advanced/custom-targets">
+    Write log events to any destination by creating your own NLog target.
+  </Card>
+  <Card title="Custom Layout Renderers" href="/advanced/custom-layout-renderers">
+    Embed custom values in layout strings with your own layout renderer.
+  </Card>
+</CardGroup>

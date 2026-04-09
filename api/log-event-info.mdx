@@ -1,0 +1,335 @@
+---
+title: "LogEventInfo"
+description: "Represents a single log event with all associated data including message, level, exception, and properties."
+---
+
+`LogEventInfo` is the data container for a single log event. NLog creates one internally for each logging call, but you can also construct and populate one directly when you need fine-grained control — for example, to set a custom timestamp, pre-associate an exception, or carry structured properties.
+
+---
+
+## Constructors
+
+<ResponseField name="LogEventInfo()" type="LogEventInfo">
+  Creates an empty log event. `TimeStamp` is set to the current time. `Level` defaults to `LogLevel.Off`.
+
+  ```csharp
+  var logEvent = new LogEventInfo();
+  logEvent.Level = LogLevel.Info;
+  logEvent.Message = "Hello";
+  ```
+</ResponseField>
+
+<ResponseField name="LogEventInfo(LogLevel level, string? loggerName, string message)" type="LogEventInfo">
+  Creates a log event with level, logger name, and message.
+
+  <ParamField path="level" type="LogLevel" required>
+    The severity level.
+  </ParamField>
+  <ParamField path="loggerName" type="string?" required>
+    Override logger name. When `null`, the logger's own `Name` is used when the event is written.
+  </ParamField>
+  <ParamField path="message" type="string" required>
+    The log message or message template.
+  </ParamField>
+
+  ```csharp
+  var ev = new LogEventInfo(LogLevel.Warn, "MyApp", "Disk usage at {Usage}%");
+  ev.Parameters = new object[] { 92 };
+  _logger.Log(ev);
+  ```
+</ResponseField>
+
+<ResponseField name="LogEventInfo(LogLevel level, string? loggerName, IFormatProvider? formatProvider, string message, object?[]? parameters)" type="LogEventInfo">
+  Creates a log event with level, logger name, format provider, message template, and parameters.
+
+  <ParamField path="level" type="LogLevel" required>
+    The severity level.
+  </ParamField>
+  <ParamField path="loggerName" type="string?" required>
+    Override logger name.
+  </ParamField>
+  <ParamField path="formatProvider" type="IFormatProvider?" required>
+    Culture-specific formatting, or `null` for default.
+  </ParamField>
+  <ParamField path="message" type="string" required>
+    Message template.
+  </ParamField>
+  <ParamField path="parameters" type="object?[]?" required>
+    Template parameter values.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="LogEventInfo(LogLevel level, string? loggerName, IFormatProvider? formatProvider, string message, object?[]? parameters, Exception? exception)" type="LogEventInfo">
+  Full constructor including an associated exception.
+
+  <ParamField path="exception" type="Exception?" required>
+    The exception to associate with this event.
+  </ParamField>
+
+  ```csharp
+  var ev = new LogEventInfo(
+      LogLevel.Error,
+      "MyApp",
+      null,
+      "Failed to connect to {Host}",
+      new object[] { hostname },
+      connectException);
+  _logger.Log(ev);
+  ```
+</ResponseField>
+
+---
+
+## Properties
+
+<ResponseField name="Level" type="LogLevel">
+  Gets or sets the severity level of this event.
+</ResponseField>
+
+<ResponseField name="LoggerName" type="string">
+  Gets or sets the logger name associated with this event. When empty, the writing logger's `Name` is used.
+</ResponseField>
+
+<ResponseField name="Message" type="string">
+  Gets or sets the raw message template (may contain `{Name}` or `{0}` placeholders). Setting this resets `FormattedMessage`.
+</ResponseField>
+
+<ResponseField name="Parameters" type="object?[]?">
+  Gets or sets the array of parameter values to substitute into `Message`. Setting this resets `FormattedMessage`.
+</ResponseField>
+
+<ResponseField name="FormatProvider" type="IFormatProvider?">
+  Gets or sets the culture-specific format provider. When `null`, `LogFactory.DefaultCultureInfo` is used.
+</ResponseField>
+
+<ResponseField name="Exception" type="Exception?">
+  Gets or sets the exception associated with this log event.
+
+  ```csharp
+  var ev = new LogEventInfo(LogLevel.Error, null, "Unhandled error");
+  ev.Exception = caughtException;
+  ```
+</ResponseField>
+
+<ResponseField name="TimeStamp" type="DateTime">
+  Gets or sets the timestamp of the log event. Defaults to the time the object was constructed (from `TimeSource.Current`).
+
+  ```csharp
+  // Backdate an event
+  ev.TimeStamp = DateTime.UtcNow.AddSeconds(-5);
+  ```
+</ResponseField>
+
+<ResponseField name="FormattedMessage" type="string">
+  Gets the fully rendered message with all parameters substituted. This is computed lazily on first access and cached.
+
+  ```csharp
+  var ev = new LogEventInfo(LogLevel.Info, null, null, "User {Id} logged in", new object[] { 42 });
+  Console.WriteLine(ev.FormattedMessage); // "User 42 logged in"
+  ```
+</ResponseField>
+
+<ResponseField name="Properties" type="IDictionary<object, object?>">
+  Gets the per-event properties dictionary. You can attach arbitrary key-value pairs here; they are accessible in layout renderers via `${event-properties:item=key}`.
+
+  ```csharp
+  ev.Properties["RequestId"] = Guid.NewGuid();
+  ev.Properties["UserId"] = currentUserId;
+  ```
+</ResponseField>
+
+<ResponseField name="HasProperties" type="bool">
+  Returns `true` if this event has any properties set, without allocating the dictionary.
+</ResponseField>
+
+<ResponseField name="MessageFormatter" type="LogMessageFormatter">
+  Gets or sets the message formatter delegate. Override to customize how `FormattedMessage` is rendered for this specific event.
+</ResponseField>
+
+---
+
+### Call site information
+
+<ResponseField name="CallerClassName" type="string?">
+  The class name of the call site (populated when `${callsite}` is used in layouts).
+</ResponseField>
+
+<ResponseField name="CallerMemberName" type="string?">
+  The method name of the call site.
+</ResponseField>
+
+<ResponseField name="CallerFilePath" type="string?">
+  The source file path of the call site.
+</ResponseField>
+
+<ResponseField name="CallerLineNumber" type="int">
+  The source line number of the call site.
+</ResponseField>
+
+<ResponseField name="StackTrace" type="StackTrace?">
+  The full stack trace, populated when `${stacktrace}` is used in a layout.
+</ResponseField>
+
+---
+
+## LogEventBuilder
+
+`LogEventBuilder` is a fluent `struct` for constructing log events before writing them. It is created via extension methods on `ILogger` defined in `ILoggerExtensions`.
+
+<Note>
+`LogEventBuilder` is a `struct` — it is designed to be created and consumed inline. The log event is only allocated when the level is enabled.
+</Note>
+
+### Constructors
+
+<ResponseField name="LogEventBuilder(ILogger logger)" type="LogEventBuilder">
+  Creates a builder without a level. The level is resolved when `Log()` is called.
+
+  <ParamField path="logger" type="ILogger" required>
+    The logger to write to.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="LogEventBuilder(ILogger logger, LogLevel logLevel)" type="LogEventBuilder">
+  Creates a builder for the specified level. If the level is not enabled, the internal `LogEvent` remains `null` and subsequent calls are no-ops — no allocations occur.
+
+  <ParamField path="logger" type="ILogger" required>
+    The logger to write to.
+  </ParamField>
+  <ParamField path="logLevel" type="LogLevel" required>
+    The level to check and assign to the event.
+  </ParamField>
+</ResponseField>
+
+### Properties
+
+<ResponseField name="Logger" type="ILogger">
+  The target logger.
+</ResponseField>
+
+<ResponseField name="LogEvent" type="LogEventInfo?">
+  The log event being built, or `null` if the level is disabled.
+</ResponseField>
+
+### Fluent methods
+
+<ResponseField name="Message(string message)" type="LogEventBuilder">
+  Sets the plain message string.
+
+  <ParamField path="message" type="string" required>
+    The log message.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="Message(string message, params object?[] args)" type="LogEventBuilder">
+  Sets the message template and parameters.
+</ResponseField>
+
+<ResponseField name="Message<TArgument>(string message, TArgument? argument)" type="LogEventBuilder">
+  Single-argument generic overload to avoid boxing.
+</ResponseField>
+
+<ResponseField name="Message<TArgument1, TArgument2>(string message, TArgument1? arg1, TArgument2? arg2)" type="LogEventBuilder">
+  Two-argument generic overload.
+</ResponseField>
+
+<ResponseField name="Message<TArgument1, TArgument2, TArgument3>(string message, TArgument1? arg1, TArgument2? arg2, TArgument3? arg3)" type="LogEventBuilder">
+  Three-argument generic overload.
+</ResponseField>
+
+<ResponseField name="Message(IFormatProvider formatProvider, string message, params object?[] args)" type="LogEventBuilder">
+  Sets the message with an explicit format provider.
+</ResponseField>
+
+<ResponseField name="Property<T>(string propertyName, T? propertyValue)" type="LogEventBuilder">
+  Attaches a single named property to the event.
+
+  <ParamField path="propertyName" type="string" required>
+    The property key.
+  </ParamField>
+  <ParamField path="propertyValue" type="T?" required>
+    The property value.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="Properties(IEnumerable<KeyValuePair<string, object?>> properties)" type="LogEventBuilder">
+  Attaches multiple properties at once.
+</ResponseField>
+
+<ResponseField name="Exception(Exception? exception)" type="LogEventBuilder">
+  Associates an exception with the event.
+
+  <ParamField path="exception" type="Exception?" required>
+    The exception to attach.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="TimeStamp(DateTime timeStamp)" type="LogEventBuilder">
+  Overrides the event timestamp.
+
+  <ParamField path="timeStamp" type="DateTime" required>
+    The timestamp to assign.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="Callsite(string? callerClassName, string? callerMemberName, string? callerFilePath, int callerLineNumber)" type="LogEventBuilder">
+  Explicitly sets call-site information on the event.
+</ResponseField>
+
+<ResponseField name="Log(LogLevel? logLevel)" type="void">
+  Writes the event to the logger. Optionally overrides the level. If `logLevel` is `LogLevel.Off`, the event is discarded.
+
+  <ParamField path="logLevel" type="LogLevel?" required>
+    Optional level override. Defaults to the level set in the constructor.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="Log(Type wrapperType)" type="void">
+  Writes the event with a custom wrapper type for accurate call-site resolution.
+</ResponseField>
+
+---
+
+## Examples
+
+<CodeGroup>
+
+```csharp Direct LogEventInfo construction
+var ev = new LogEventInfo(
+    LogLevel.Error,
+    _logger.Name,
+    null,
+    "Order {OrderId} failed after {Attempts} retries",
+    new object[] { orderId, retryCount },
+    exception);
+
+ev.Properties["CustomerId"] = customerId;
+ev.Properties["Region"] = region;
+
+_logger.Log(ev);
+```
+
+```csharp LogEventBuilder fluent API
+_logger.ForErrorEvent()
+    .Exception(ex)
+    .Message("Order {OrderId} failed after {Attempts} retries", orderId, retryCount)
+    .Property("CustomerId", customerId)
+    .Property("Region", region)
+    .Log();
+```
+
+```csharp Structured info event
+_logger.ForInfoEvent()
+    .Message("Payment {PaymentId} of {Amount:C} processed in {Duration}ms",
+        paymentId, amount, elapsed.TotalMilliseconds)
+    .Property("Gateway", gatewayName)
+    .Log();
+```
+
+```csharp Backdated event
+var ev = new LogEventInfo(LogLevel.Info, null, "Replaying historical event");
+ev.TimeStamp = historicalTimestamp;
+_logger.Log(ev);
+```
+
+</CodeGroup>

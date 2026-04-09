@@ -1,0 +1,240 @@
+---
+title: "Programmatic Configuration"
+description: "Configure NLog using the fluent setup API or direct API in C#."
+---
+
+NLog can be fully configured in C# without any XML file. This is useful when configuration is dynamic, when you want compile-time safety, or when you're building a library that ships its own logging setup.
+
+## The fluent setup API
+
+`LogManager.Setup()` returns an `ISetupBuilder` that chains configuration steps:
+
+```csharp
+LogManager.Setup()
+    .SetupLogFactory(lf => lf.SetGlobalThreshold(LogLevel.Debug))
+    .SetupExtensions(ext => ext.RegisterAssembly(typeof(SomeTarget).Assembly))
+    .LoadConfiguration(c => c
+        .ForLogger()
+            .FilterMinLevel(LogLevel.Info)
+            .WriteToConsole()
+        .ForLogger()
+            .FilterMinLevel(LogLevel.Warn)
+            .WriteToFile(fileName: "logs/errors.log"));
+```
+
+The builder is the preferred way to configure NLog from NLog 5.2 onwards.
+
+## SetupLogFactory — configure LogFactory options
+
+Use `SetupLogFactory` to set global options before loading configuration:
+
+```csharp
+LogManager.Setup().SetupLogFactory(lf =>
+{
+    lf.SetGlobalThreshold(LogLevel.Debug);   // drop events below this level globally
+    lf.SetThrowExceptions(true);             // throw exceptions from targets (dev only)
+    lf.SetThrowConfigExceptions(true);       // throw on invalid configuration
+    lf.SetAutoShutdown(true);                // flush and close on AppDomain exit
+});
+```
+
+## SetupExtensions — load extension assemblies
+
+Register assemblies that provide additional targets or layout renderers:
+
+```csharp
+LogManager.Setup().SetupExtensions(ext =>
+{
+    ext.RegisterAssembly("NLog.Web.AspNetCore");
+    ext.RegisterAssembly(typeof(SomeCustomTarget).Assembly);
+    ext.RegisterTarget<SomeCustomTarget>("MyTarget");
+});
+```
+
+## LoadConfigurationFromFile — load from XML file
+
+Load an `NLog.config` file explicitly:
+
+```csharp
+// Load a specific file (throws if missing)
+LogManager.Setup().LoadConfigurationFromFile("NLog.config", optional: false);
+
+// Scan default candidate paths; continue silently if not found
+LogManager.Setup().LoadConfigurationFromFile();
+
+// Load from an inline XML string
+LogManager.Setup().LoadConfigurationFromXml(@"
+<nlog>
+  <targets><target xsi:type=""Console"" name=""console"" /></targets>
+  <rules><logger name=""*"" minlevel=""Info"" writeTo=""console"" /></rules>
+</nlog>");
+```
+
+## LoadConfiguration — inline programmatic config
+
+Use `LoadConfiguration` with a builder delegate to define targets and rules entirely in code:
+
+```csharp
+LogManager.Setup().LoadConfiguration(c =>
+{
+    // Route all loggers, Info and above, to the console
+    c.ForLogger()
+        .FilterMinLevel(LogLevel.Info)
+        .WriteToConsole(layout: "${longdate} ${level:uppercase=true} ${message}");
+});
+```
+
+The `ForLogger` method accepts an optional logger-name pattern and minimum level:
+
+```csharp
+c.ForLogger("MyApp.*", LogLevel.Debug)
+    .WriteToFile(fileName: "logs/myapp.log");
+```
+
+## Building a complete config programmatically
+
+For full control, construct `LoggingConfiguration` directly and assign it:
+
+```csharp
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
+var config = new LoggingConfiguration();
+
+// --- Targets ---
+var consoleTarget = new ConsoleTarget("console")
+{
+    Layout = "${longdate} ${uppercase:${level}} ${logger:shortName=true} ${message}"
+};
+
+var fileTarget = new FileTarget("file")
+{
+    FileName = "${basedir}/logs/app-${shortdate}.log",
+    Layout   = "${longdate} ${uppercase:${level}} ${logger} ${message}${onexception:inner= ${exception:format=tostring}}",
+    KeepFileOpen = true,
+    Encoding = System.Text.Encoding.UTF8,
+    ArchiveAboveSize = 10 * 1024 * 1024,  // 10 MB
+    MaxArchiveFiles  = 10
+};
+
+config.AddTarget(consoleTarget);
+config.AddTarget(fileTarget);
+
+// --- Rules ---
+// Silence Microsoft internals
+var nullTarget = new NullTarget("blackhole");
+config.AddTarget(nullTarget);
+config.AddRule(LogLevel.Trace, LogLevel.Info, nullTarget, "Microsoft.*", final: true);
+
+// Route Warn and above to the error file
+config.AddRule(LogLevel.Warn, LogLevel.Fatal, fileTarget);
+
+// Route Info and above to both console and file
+config.AddRule(LogLevel.Info, LogLevel.Fatal, consoleTarget);
+
+// Activate
+LogManager.Configuration = config;
+```
+
+## AddTarget and AddRule
+
+`LoggingConfiguration` exposes several overloads for adding targets and rules:
+
+```csharp
+// Register a target by name
+config.AddTarget(target);
+config.AddTarget("alias", target);
+
+// Add a rule for a range of levels
+config.AddRule(LogLevel.Info, LogLevel.Fatal, target);
+config.AddRule(LogLevel.Info, LogLevel.Fatal, target, loggerNamePattern: "MyApp.*");
+config.AddRule(LogLevel.Info, LogLevel.Fatal, target, loggerNamePattern: "*", final: true);
+
+// Add a rule for a single level
+config.AddRuleForOneLevel(LogLevel.Error, target);
+
+// Add a rule for all levels (Trace through Fatal)
+config.AddRuleForAllLevels(target);
+
+// Add a fully constructed LoggingRule object
+config.AddRule(new LoggingRule("*", LogLevel.Debug, LogLevel.Fatal, target));
+```
+
+## Writing to common destinations
+
+<Tabs>
+  <Tab title="Console">
+    ```csharp
+    LogManager.Setup().LoadConfiguration(c => c
+        .ForLogger()
+            .FilterMinLevel(LogLevel.Info)
+            .WriteToConsole(layout: "${time} ${level:uppercase=true} ${message}"));
+    ```
+  </Tab>
+  <Tab title="Colored console">
+    ```csharp
+    LogManager.Setup().LoadConfiguration(c => c
+        .ForLogger()
+            .FilterMinLevel(LogLevel.Trace)
+            .WriteToColoredConsole(highlightWordLevel: true));
+    ```
+  </Tab>
+  <Tab title="File">
+    ```csharp
+    LogManager.Setup().LoadConfiguration(c => c
+        .ForLogger()
+            .FilterMinLevel(LogLevel.Info)
+            .WriteToFile(
+                fileName: "logs/app.log",
+                archiveAboveSize: 10 * 1024 * 1024,
+                maxArchiveFiles: 5));
+    ```
+  </Tab>
+  <Tab title="Debug output">
+    ```csharp
+    // Writes to System.Diagnostics.Debug (visible in IDE output window)
+    LogManager.Setup().LoadConfiguration(c => c
+        .ForLogger()
+            .FilterMinLevel(LogLevel.Trace)
+            .WriteToDebug());
+    ```
+  </Tab>
+</Tabs>
+
+## Target wrappers
+
+Wrap a target with `WithAsync` or `WithBuffering` for asynchronous or batched writing:
+
+```csharp
+LogManager.Setup().LoadConfiguration(c => c
+    .ForLogger()
+        .FilterMinLevel(LogLevel.Info)
+        .WriteToFile(fileName: "logs/app.log")
+        .WithAsync(overflowAction: AsyncTargetWrapperOverflowAction.Discard, queueLimit: 10000));
+```
+
+Add retry logic around a target:
+
+```csharp
+LogManager.Setup().LoadConfiguration(c => c
+    .ForLogger()
+        .FilterMinLevel(LogLevel.Warn)
+        .WriteToFile(fileName: "logs/errors.log")
+        .WithRetry(retryCount: 3, retryDelay: TimeSpan.FromMilliseconds(100)));
+```
+
+## Legacy SimpleConfigurator
+
+<Warning>
+  `SimpleConfigurator` is marked obsolete as of NLog 5.2. Use `LogManager.Setup().LoadConfiguration(...)` instead.
+</Warning>
+
+The old `SimpleConfigurator` API provided quick one-liner setups. The table below shows the equivalent modern API:
+
+| Legacy (obsolete) | Modern equivalent |
+|---|---|
+| `SimpleConfigurator.ConfigureForConsoleLogging()` | `LogManager.Setup().LoadConfiguration(c => c.ForLogger().FilterMinLevel(LogLevel.Info).WriteToConsole())` |
+| `SimpleConfigurator.ConfigureForConsoleLogging(LogLevel.Debug)` | `LogManager.Setup().LoadConfiguration(c => c.ForLogger(LogLevel.Debug).WriteToConsole())` |
+| `SimpleConfigurator.ConfigureForFileLogging("app.log")` | `LogManager.Setup().LoadConfiguration(c => c.ForLogger().FilterMinLevel(LogLevel.Info).WriteToFile("app.log"))` |
+| `SimpleConfigurator.ConfigureForTargetLogging(target, LogLevel.Warn)` | `LogManager.Setup().LoadConfiguration(c => c.ForLogger(LogLevel.Warn).WriteTo(target))` |

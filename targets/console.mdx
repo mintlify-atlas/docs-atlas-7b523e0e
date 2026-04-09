@@ -1,0 +1,265 @@
+---
+title: "Console Target"
+description: "Write log messages to the standard output or standard error console stream."
+---
+
+NLog provides two console targets: `Console` for plain text output and `ColoredConsole` for output with per-level color highlighting.
+
+## Console Target
+
+The `Console` target writes formatted log messages to `stdout` or `stderr` using `System.Console`. The default layout is:
+
+```
+${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}
+```
+
+### Configuration
+
+<Tabs>
+  <Tab title="XML">
+    ```xml
+    <targets>
+      <target xsi:type="Console"
+              name="console"
+              layout="${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}" />
+    </targets>
+
+    <rules>
+      <logger name="*" minlevel="Info" writeTo="console" />
+    </rules>
+    ```
+  </Tab>
+  <Tab title="C#">
+    ```csharp
+    var config = new NLog.Config.LoggingConfiguration();
+
+    var consoleTarget = new NLog.Targets.ConsoleTarget("console")
+    {
+        Layout = "${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}"
+    };
+
+    config.AddRule(NLog.LogLevel.Info, NLog.LogLevel.Fatal, consoleTarget);
+    NLog.LogManager.Configuration = config;
+    ```
+  </Tab>
+</Tabs>
+
+### Writing to stderr
+
+Set `stdErr="true"` to redirect all output to the standard error stream instead of standard output:
+
+```xml
+<target xsi:type="Console"
+        name="errConsole"
+        stdErr="true"
+        layout="${level:uppercase=true}|${message:withexception=true}" />
+```
+
+`stdErr` is a `Layout<bool>`, so it can be set to a layout expression to route individual log events to different streams based on their properties.
+
+### Header and Footer
+
+The `Console` target inherits from `TargetWithLayoutHeaderAndFooter`. The `header` layout is rendered and written when the target initializes; `footer` is written when it closes:
+
+```xml
+<target xsi:type="Console" name="console" layout="${message}">
+  <header>===== Application Log Started =====</header>
+  <footer>===== Application Log Ended =====</footer>
+</target>
+```
+
+### Properties
+
+<ParamField path="layout" type="Layout" default="${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}">
+  The layout used to format log messages.
+</ParamField>
+
+<ParamField path="stdErr" type="Layout&lt;bool&gt;">
+  When `true`, writes to `Console.Error` (stderr) instead of `Console.Out` (stdout). Default: `false`.
+</ParamField>
+
+<ParamField path="encoding" type="Encoding">
+  The console output encoding. Setting this property also updates `Console.OutputEncoding`.
+</ParamField>
+
+<ParamField path="autoFlush" type="bool" default="false">
+  Flush the console output stream after each write. Normally not required because `Console.Out` has `AutoFlush=true`, but useful when output is piped to a file.
+</ParamField>
+
+<ParamField path="detectConsoleAvailable" type="bool" default="false">
+  Automatically disable console output when the console is unavailable — for example, in a Windows Service (`Environment.UserInteractive=false`) or when standard input is not available.
+</ParamField>
+
+<ParamField path="forceWriteLine" type="bool" default="false">
+  Force use of `Console.WriteLine()` for each message instead of the faster internal buffering path.
+</ParamField>
+
+<ParamField path="header" type="Layout">
+  Written once when the target is initialized.
+</ParamField>
+
+<ParamField path="footer" type="Layout">
+  Written once when the target is closed.
+</ParamField>
+
+---
+
+## ColoredConsole Target
+
+The `ColoredConsole` target writes to the console with customizable color highlighting per log level or per word. It is configured with `xsi:type="ColoredConsole"`.
+
+### Configuration
+
+<Tabs>
+  <Tab title="XML">
+    ```xml
+    <targets>
+      <target xsi:type="ColoredConsole"
+              name="colorConsole"
+              useDefaultRowHighlightingRules="true"
+              layout="${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}">
+        <!-- Custom row rules override or supplement defaults -->
+        <highlight-row condition="level == LogLevel.Error"
+                       foregroundColor="Red"
+                       backgroundColor="White" />
+        <highlight-row condition="level == LogLevel.Warn"
+                       foregroundColor="Yellow" />
+        <!-- Word-level highlighting -->
+        <highlight-word text="CRITICAL"
+                        foregroundColor="Red"
+                        backgroundColor="Yellow"
+                        wholeWords="true" />
+      </target>
+    </targets>
+    ```
+  </Tab>
+  <Tab title="C#">
+    ```csharp
+    var config = new NLog.Config.LoggingConfiguration();
+
+    var colorTarget = new NLog.Targets.ColoredConsoleTarget("colorConsole")
+    {
+        Layout = "${longdate}|${level:uppercase=true}|${logger}|${message:withexception=true}",
+        UseDefaultRowHighlightingRules = true
+    };
+
+    colorTarget.RowHighlightingRules.Add(new NLog.Targets.ConsoleRowHighlightingRule(
+        condition: NLog.Conditions.ConditionParser.ParseExpression("level == LogLevel.Error"),
+        foregroundColor: NLog.Targets.ConsoleOutputColor.Red,
+        backgroundColor: NLog.Targets.ConsoleOutputColor.White
+    ));
+
+    config.AddRule(NLog.LogLevel.Debug, NLog.LogLevel.Fatal, colorTarget);
+    NLog.LogManager.Configuration = config;
+    ```
+  </Tab>
+</Tabs>
+
+### Default Row Highlighting
+
+When `useDefaultRowHighlightingRules="true"` (the default), the following colors are applied automatically:
+
+| Level | Foreground | Background |
+|---|---|---|
+| `Fatal` | Red | NoChange |
+| `Error` | Red | NoChange |
+| `Warn` | Yellow | NoChange |
+| `Info` | White | NoChange |
+| `Debug` | Gray | NoChange |
+| `Trace` | Gray | NoChange |
+
+### Row Highlighting Rules (`<highlight-row>`)
+
+Each `<highlight-row>` rule has a `condition` (a NLog condition expression) and specifies `foregroundColor` and/or `backgroundColor`. When multiple rules match, the first matching rule wins.
+
+```xml
+<highlight-row condition="level == LogLevel.Fatal"
+               foregroundColor="White"
+               backgroundColor="Red" />
+<highlight-row condition="level == LogLevel.Error"
+               foregroundColor="Red" />
+```
+
+### Word Highlighting Rules (`<highlight-word>`)
+
+Word-level rules color specific text within a log message:
+
+```xml
+<highlight-word text="exception"
+                foregroundColor="Red"
+                ignoreCase="true"
+                wholeWords="false" />
+<highlight-word text="SUCCESS"
+                foregroundColor="Green"
+                wholeWords="true" />
+```
+
+<ParamField path="text" type="string" required>
+  The literal text to match and highlight.
+</ParamField>
+
+<ParamField path="foregroundColor" type="ConsoleOutputColor">
+  The foreground color to apply to matched text.
+</ParamField>
+
+<ParamField path="backgroundColor" type="ConsoleOutputColor">
+  The background color to apply to matched text.
+</ParamField>
+
+<ParamField path="wholeWords" type="bool" default="false">
+  Only match whole words.
+</ParamField>
+
+<ParamField path="ignoreCase" type="bool" default="false">
+  Match case-insensitively.
+</ParamField>
+
+### ConsoleOutputColor Values
+
+Available color values for `foregroundColor` and `backgroundColor`:
+
+`Black`, `DarkBlue`, `DarkGreen`, `DarkCyan`, `DarkRed`, `DarkMagenta`, `DarkYellow`, `Gray`, `DarkGray`, `Blue`, `Green`, `Cyan`, `Red`, `Magenta`, `Yellow`, `White`, `NoChange`
+
+Use `NoChange` to leave the current color in place.
+
+### ColoredConsole Properties
+
+<ParamField path="useDefaultRowHighlightingRules" type="bool" default="true">
+  Apply the built-in per-level color rules. Set to `false` to use only your custom `<highlight-row>` rules.
+</ParamField>
+
+<ParamField path="stdErr" type="Layout&lt;bool&gt;">
+  When `true`, writes to stderr instead of stdout.
+</ParamField>
+
+<ParamField path="encoding" type="Encoding">
+  The console output encoding.
+</ParamField>
+
+<ParamField path="enableAnsiOutput" type="bool" default="false">
+  Emit ANSI escape codes for colors instead of using `Console.ForegroundColor` / `Console.BackgroundColor`. Useful for terminals and CI environments that support ANSI but not the Windows console API.
+</ParamField>
+
+<ParamField path="detectConsoleAvailable" type="bool" default="false">
+  Disable console output when the console is not available (Windows Service or non-console app).
+</ParamField>
+
+<ParamField path="detectOutputRedirected" type="bool" default="false">
+  Disable color output when `Console.IsOutputRedirected` is `true` (i.e., output is piped to a file).
+</ParamField>
+
+<ParamField path="noColor" type="Layout&lt;bool&gt;">
+  Disable colors dynamically. Defaults to checking the `NO_COLOR` environment variable (respects the [no-color.org](https://no-color.org) convention).
+</ParamField>
+
+<ParamField path="autoFlush" type="bool" default="false">
+  Flush the output stream after each write.
+</ParamField>
+
+### ANSI vs. System Printer
+
+By default, `ColoredConsoleTarget` uses the Windows console API (`Console.ForegroundColor`) to apply colors — the **system printer**. When `enableAnsiOutput="true"`, it switches to the **ANSI printer**, which wraps text in ANSI escape sequences (`\e[31m` etc.). Use ANSI output when targeting Linux, macOS, or CI pipelines where the Windows API is unavailable or when you need the color codes preserved in redirected output.
+
+<Warning>
+ANSI escape codes are visible as raw characters in environments that do not support them. Use `detectOutputRedirected="true"` alongside `enableAnsiOutput="true"` to automatically disable colors when output is redirected to a file.
+</Warning>

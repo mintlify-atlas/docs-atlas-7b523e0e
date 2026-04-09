@@ -1,0 +1,144 @@
+---
+title: "LoggingRule"
+description: "Represents a routing rule that controls which log events are written to which targets."
+---
+
+`LoggingRule` is the programmatic equivalent of the `<logger>` XML element. Each rule matches log events by logger name pattern and log level, then routes them to one or more targets.
+
+## Constructors
+
+```csharp
+// Empty rule — configure properties after construction
+var rule = new LoggingRule();
+
+// Rule with logger pattern, level range, and target
+var rule = new LoggingRule("MyApp.*", LogLevel.Info, LogLevel.Fatal, myTarget);
+
+// Rule with single minimum level (max defaults to Fatal)
+var rule = new LoggingRule("*", LogLevel.Warn, myTarget);
+```
+
+## Key properties
+
+<ParamField path="LoggerNamePattern" type="string">
+  Logger name pattern to match. Supports wildcards: `*` matches any sequence of characters, `?` matches a single character. Use `*` to match all loggers, or `MyApp.*` to match a namespace prefix.
+</ParamField>
+
+<ParamField path="MinLevel" type="LogLevel">
+  Minimum log level this rule matches. Events below this level are not routed. When set, `MaxLevel` defaults to `LogLevel.Fatal`.
+</ParamField>
+
+<ParamField path="MaxLevel" type="LogLevel">
+  Maximum log level this rule matches. Events above this level are not routed. Use together with `MinLevel` to match a specific level range.
+</ParamField>
+
+<ParamField path="Final" type="bool" default="false">
+  When `true`, stops processing subsequent rules after this rule matches. Equivalent to the `final="true"` XML attribute.
+</ParamField>
+
+<ParamField path="Enabled" type="bool" default="true">
+  When `false`, this rule is skipped entirely during log event routing.
+</ParamField>
+
+<ParamField path="Targets" type="IList<Target>">
+  The list of targets this rule writes matching events to.
+</ParamField>
+
+<ParamField path="Filters" type="IList<Filter>">
+  Filters applied to matching events before writing. See `FilterDefaultAction` for what happens when all filters return `Neutral`.
+</ParamField>
+
+<ParamField path="FilterDefaultAction" type="FilterResult" default="Neutral">
+  Action taken when all filters return `Neutral`. Set to `FilterResult.Ignore` to default-deny, or `FilterResult.Log` to default-allow.
+</ParamField>
+
+## Methods
+
+### Level management
+
+```csharp
+// Enable or disable individual levels
+rule.EnableLoggingForLevel(LogLevel.Debug);
+rule.DisableLoggingForLevel(LogLevel.Trace);
+
+// Enable a range of levels
+rule.EnableLoggingForLevels(LogLevel.Info, LogLevel.Fatal);
+
+// Check if a level is enabled
+bool enabled = rule.IsLoggingEnabledForLevel(LogLevel.Warn);
+```
+
+### WriteTo (fluent)
+
+```csharp
+// Add a target to the rule
+rule.WriteTo(myFileTarget);
+```
+
+## Examples
+
+### Programmatic configuration
+
+```csharp
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
+var config = new LoggingConfiguration();
+
+var fileTarget = new FileTarget("logfile") { FileName = "app.log" };
+var consoleTarget = new ConsoleTarget("console");
+
+config.AddTarget(fileTarget);
+config.AddTarget(consoleTarget);
+
+// All loggers, Info and above → file
+var fileRule = new LoggingRule("*", LogLevel.Info, fileTarget);
+config.LoggingRules.Add(fileRule);
+
+// Only MyApp loggers, Debug and above → console (final, stops further rules)
+var appRule = new LoggingRule("MyApp.*", LogLevel.Debug, consoleTarget) { Final = true };
+config.LoggingRules.Add(appRule);
+
+LogManager.Configuration = config;
+```
+
+### Equivalent XML
+
+```xml NLog.config
+<rules>
+  <logger name="*"      minlevel="Info"  writeTo="logfile" />
+  <logger name="MyApp.*" minlevel="Debug" writeTo="console" final="true" />
+</rules>
+```
+
+### Single-level rule
+
+```csharp
+// Only route Fatal events to an alert target
+var fatalRule = new LoggingRule("*", LogLevel.Fatal, LogLevel.Fatal, alertTarget);
+config.LoggingRules.Add(fatalRule);
+```
+
+### Rule with filter
+
+```csharp
+using NLog.Filters;
+
+var rule = new LoggingRule("*", LogLevel.Info, fileTarget);
+
+// Only log events where message contains "important"
+var filter = new ConditionBasedFilter
+{
+    Condition = "contains('${message}', 'important')",
+    Action = FilterResult.Log
+};
+rule.Filters.Add(filter);
+rule.FilterDefaultAction = FilterResult.Ignore; // ignore everything else
+
+config.LoggingRules.Add(rule);
+```
+
+<Note>
+Rules are evaluated in order. The first matching rule that writes to a target wins, unless `final="false"` (the default), in which case subsequent rules are also evaluated. Set `Final = true` to stop after the first match.
+</Note>

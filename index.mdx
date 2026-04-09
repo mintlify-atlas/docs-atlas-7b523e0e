@@ -1,97 +1,105 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "NLog — Flexible Logging for .NET"
+description: "High-performance, structured logging library for all major .NET platforms. Route logs to files, consoles, databases, and more with a flexible configuration system."
 ---
 
-## Setting up
+NLog is a free, open-source logging platform for .NET with rich log routing and management capabilities. It makes it easy to produce and manage high-quality logs for your application regardless of its size or complexity.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get NLog running in your application in minutes
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Configuration" icon="gear" href="/configuration/overview">
+    Configure targets, rules, and layouts via XML or code
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Targets" icon="bullseye" href="/targets/overview">
+    Write logs to files, consoles, databases, and custom destinations
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/log-manager">
+    Explore the full public API surface
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Why NLog?
 
-Everything you need to create world-class documentation.
+NLog is battle-tested across millions of .NET applications and supports every major .NET platform:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+- **.NET 6, 7, 8, 9, and 10** — including AOT compilation
+- **.NET Standard 2.0 and 2.1**
+- **.NET Framework 3.5 through 4.8**
+- **Xamarin Android + iOS**, **Mono**, **UWP**, **MAUI**
 
-## Need inspiration?
+<CardGroup cols={3}>
+  <Card title="Structured Logging" icon="list-tree">
+    Log structured data with message templates, captured as typed properties alongside the rendered message
+  </Card>
+  <Card title="Flexible Routing" icon="route">
+    Route log events to one or more targets based on logger name, log level, and custom conditions
+  </Card>
+  <Card title="60+ Layout Renderers" icon="table-columns">
+    Enrich log output with timestamps, call sites, thread info, environment variables, and more
+  </Card>
+  <Card title="Target Wrappers" icon="layer-group">
+    Wrap targets with async buffering, retry, fallback, filtering, and rate limiting behavior
+  </Card>
+  <Card title="AOT Compatible" icon="bolt">
+    Full support for .NET Native AOT and trimming — suitable for high-performance production workloads
+  </Card>
+  <Card title="Extensible" icon="puzzle-piece">
+    Create custom targets, layout renderers, conditions, and filters to match any logging requirement
+  </Card>
+</CardGroup>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## Get started
+
+<Steps>
+  <Step title="Install NLog">
+    Add the NLog NuGet package to your project:
+    ```bash
+    dotnet add package NLog
+    ```
+  </Step>
+  <Step title="Create a configuration file">
+    Add an `NLog.config` file to your project:
+    ```xml NLog.config
+    <?xml version="1.0" encoding="utf-8" ?>
+    <nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <targets>
+        <target xsi:type="File" name="logfile" fileName="app.log"
+                layout="${longdate} ${level} ${message} ${exception:format=tostring}" />
+        <target xsi:type="Console" name="logconsole"
+                layout="${level:uppercase=true}: ${message} ${exception:format=message}" />
+      </targets>
+      <rules>
+        <logger name="*" minlevel="Info" writeTo="logfile,logconsole" />
+      </rules>
+    </nlog>
+    ```
+  </Step>
+  <Step title="Get a logger and start logging">
+    ```csharp Program.cs
+    using NLog;
+
+    var logger = LogManager.GetCurrentClassLogger();
+
+    logger.Info("Application started");
+    logger.Debug("Processing item {ItemId}", 42);
+    logger.Error(ex, "Failed to process item {ItemId}", 42);
+    ```
+  </Step>
+</Steps>
+
+## Platform guides
+
+<CardGroup cols={3}>
+  <Card title=".NET Framework" icon="windows" href="/getting-started/dotnet-framework">
+    Set up NLog in classic .NET Framework apps
+  </Card>
+  <Card title="ASP.NET Core" icon="globe" href="/getting-started/aspnet-core">
+    Integrate NLog with Microsoft.Extensions.Logging
+  </Card>
+  <Card title=".NET Console" icon="terminal" href="/getting-started/dotnet-console">
+    Use NLog in modern .NET console applications
+  </Card>
+</CardGroup>

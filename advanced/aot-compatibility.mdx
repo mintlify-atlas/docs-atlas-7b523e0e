@@ -1,0 +1,154 @@
+---
+title: "AOT Compatibility"
+description: "NLog 6.0 is fully compatible with .NET Native AOT compilation and trimming."
+---
+
+NLog 6.0 ships with full support for .NET Native AOT (Ahead-of-Time) compilation and IL trimming. All built-in targets, layout renderers, and layouts work correctly in AOT-published applications.
+
+## What is AOT?
+
+.NET Native AOT compiles your application to a self-contained native binary before deployment. The .NET runtime is included in the binary; there is no JIT compiler at runtime. Benefits include faster startup, lower memory footprint, and a smaller deployment package.
+
+IL trimming is a related feature that removes unreferenced code from the output assembly, reducing binary size. Both features require that all types used at runtime are known at publish time.
+
+## Supported frameworks
+
+The `IsAotCompatible` and `IsTrimmable` MSBuild properties are set in `NLog.csproj` for the following target frameworks:
+
+```xml
+<IsTrimmable Condition=" '$(TargetFramework)' == 'netstandard2.1'
+    Or $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net6.0')) ">true</IsTrimmable>
+<IsAotCompatible Condition=" '$(TargetFramework)' == 'netstandard2.1'
+    Or $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net6.0')) ">true</IsAotCompatible>
+```
+
+AOT and trimming are supported on **netstandard2.1** and **.NET 6 and later** (net6.0, net7.0, net8.0, net9.0, net10.0). They are **not** available on .NET Framework or netstandard2.0.
+
+## What works with AOT
+
+All of the following work out of the box with an AOT-published NLog application:
+
+- All built-in targets (`FileTarget`, `ConsoleTarget`, `DebuggerTarget`, `ColoredConsoleTarget`, etc.)
+- All built-in layout renderers (`${message}`, `${level}`, `${logger}`, `${longdate}`, `${exception}`, etc.)
+- All built-in layouts (`SimpleLayout`, `JsonLayout`, `CsvLayout`, `XmlLayout`)
+- Structured logging and message templates
+- `ScopeContext` (MDLC / NDLC style ambient properties)
+- Programmatic configuration via `LoggingConfiguration`
+
+## What requires attention with AOT
+
+### Dynamic assembly loading from XML config
+
+The `<extensions><add assembly="..." /></extensions>` mechanism uses `Assembly.GetTypes()`, which is annotated `[RequiresUnreferencedCode]` and incompatible with trimming. The `AssemblyExtensionLoader` class that powers this feature is marked `[Obsolete]` in NLog 5.2+ for this reason.
+
+**Do not use assembly scanning in AOT builds.** Register custom types explicitly instead.
+
+### Auto-discovery
+
+`autoLoadExtensions="true"` and the `AutoLoadExtensions()` fluent method both rely on scanning assemblies at startup. These are also incompatible with AOT.
+
+### Custom extensions
+
+Custom targets and layout renderers that are loaded by type name from XML config rely on reflection. Without an explicit registration, the AOT linker can trim the type before it is needed.
+
+**Always register custom types explicitly** before loading configuration:
+
+```csharp
+LogManager.Setup()
+    .SetupExtensions(s =>
+    {
+        s.RegisterTarget<MyHttpTarget>("MyHttp");
+        s.RegisterLayoutRenderer<CorrelationIdLayoutRenderer>("correlation-id");
+    })
+    .LoadConfigurationFromFile("NLog.config");
+```
+
+## `[DynamicallyAccessedMembers]` in custom extensions
+
+When the AOT linker sees a call to `RegisterTarget<T>` or `RegisterLayoutRenderer<T>`, it preserves the public parameterless constructor and all public properties of `T` because those generic methods carry the `[DynamicallyAccessedMembers]` annotation:
+
+```csharp
+public static ISetupExtensionsBuilder RegisterTarget<
+    [DynamicallyAccessedMembers(
+        DynamicallyAccessedMemberTypes.PublicParameterlessConstructor |
+        DynamicallyAccessedMemberTypes.PublicProperties)] T>(
+    this ISetupExtensionsBuilder setupBuilder,
+    string? name = null)
+    where T : Target, new()
+```
+
+This means your custom type's properties (which map to XML config attributes) are preserved automatically as long as you register the type through the fluent API. No extra annotations are needed on the custom class itself in the common case.
+
+If your custom extension accesses other types dynamically (for example, by reading a type name from a config string and calling `Activator.CreateInstance`), you must annotate those members yourself:
+
+```csharp
+using System.Diagnostics.CodeAnalysis;
+
+public void CreateDynamic(
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+    Type targetType)
+{
+    var instance = (Target)Activator.CreateInstance(targetType)!;
+}
+```
+
+## Prefer programmatic configuration for AOT
+
+XML-based `NLog.config` can still be used with AOT, but you must register all custom extensions programmatically and avoid the `<extensions>` element. Alternatively, use a fully programmatic configuration which requires no reflection at all:
+
+```csharp
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
+// Register custom extensions first
+LogManager.Setup()
+    .SetupExtensions(s =>
+    {
+        s.RegisterTarget<MyHttpTarget>("MyHttp");
+        s.RegisterLayoutRenderer<CorrelationIdLayoutRenderer>("correlation-id");
+    });
+
+// Build configuration in code — no XML file needed
+var config = new LoggingConfiguration();
+
+var fileTarget = new FileTarget("file")
+{
+    FileName = "logs/app.log",
+    Layout = "${longdate}|${level:uppercase=true}|${correlation-id}|${logger}|${message:withexception=true}"
+};
+
+var consoleTarget = new ConsoleTarget("console")
+{
+    Layout = "${level:uppercase=true}|${message}"
+};
+
+config.AddTarget(fileTarget);
+config.AddTarget(consoleTarget);
+config.AddRuleForAllLevels(fileTarget);
+config.AddRuleForAtLeast(LogLevel.Warn, consoleTarget);
+
+LogManager.Configuration = config;
+```
+
+## Publishing an AOT application
+
+Add the following to your `.csproj` to enable Native AOT:
+
+```xml
+<PropertyGroup>
+  <PublishAot>true</PublishAot>
+</PropertyGroup>
+```
+
+Then publish:
+
+```bash
+dotnet publish -c Release -r linux-x64
+```
+
+NLog will not produce any AOT linker warnings when all extensions are registered via the fluent API and no assembly scanning is used.
+
+<Tip>
+Run `dotnet publish` with `-p:TreatLinkerWarningsAsErrors=true` to catch any remaining reflection-based patterns early in the build pipeline.
+</Tip>

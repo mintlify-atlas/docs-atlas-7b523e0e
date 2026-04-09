@@ -1,0 +1,208 @@
+---
+title: "Layouts overview"
+description: "Layouts define the format of log output in NLog. Learn about SimpleLayout, JsonLayout, CsvLayout, and XmlLayout."
+---
+
+A **layout** controls how a log event is serialized into output text. Every NLog target has a `layout` property. When a log event is written, the layout renders a string (or structured document) from the event's data — timestamp, level, message, exception, properties, and more.
+
+NLog ships four built-in layout types:
+
+| Layout | Output format |
+|---|---|
+| `SimpleLayout` | Plain text with embedded `${...}` expressions |
+| `JsonLayout` | Structured JSON object |
+| `CsvLayout` | Comma-separated values |
+| `XmlLayout` | XML document |
+
+## SimpleLayout
+
+`SimpleLayout` is the default layout type. A layout string is just plain text with **layout renderer** expressions embedded using `${renderer-name}` syntax. NLog implicitly converts any plain string assigned to a `layout` property into a `SimpleLayout`.
+
+```xml NLog.config
+<target name="file" xsi:type="File" fileName="app.log"
+        layout="${longdate} ${level:uppercase=true} ${logger} ${message}${onexception:inner= ${exception:format=tostring}}" />
+```
+
+The above produces output like:
+
+```
+2025-01-15 12:34:56.7890 INFO MyApp.OrderService Processing order 42
+2025-01-15 12:34:57.1230 ERROR MyApp.OrderService Failed to process order 42 System.InvalidOperationException: ...
+```
+
+### Renderer syntax
+
+A layout renderer is referenced by name inside `${...}`. Parameters are passed with colon-separated `key=value` pairs:
+
+```
+${renderer-name}
+${renderer-name:param=value}
+${renderer-name:param1=value1:param2=value2}
+```
+
+Examples:
+
+```
+${longdate}
+${level:uppercase=true}
+${date:format=yyyy-MM-dd HH:mm:ss}
+${exception:format=type,message,stacktrace:separator=|}
+${event-properties:item=OrderId}
+```
+
+### Setting a layout on a target (config file)
+
+```xml NLog.config
+<targets>
+  <target name="console" xsi:type="ColoredConsole"
+          layout="${longdate} [${level:uppercase=true:padding=-5}] ${logger:shortName=true} - ${message}" />
+
+  <target name="file" xsi:type="File"
+          fileName="${basedir}/logs/app.log"
+          layout="${longdate} ${level} ${logger} ${message}${onexception:inner=${newline}${exception:format=tostring}}" />
+</targets>
+```
+
+### Setting a layout in code
+
+```csharp
+var fileTarget = new FileTarget("file")
+{
+    FileName = "${basedir}/logs/app.log",
+    Layout = "${longdate} ${level:uppercase=true} ${logger} ${message}"
+};
+```
+
+## JsonLayout
+
+`JsonLayout` renders log events as JSON objects. It is ideal for structured logging pipelines and log aggregation tools (Seq, Elasticsearch, Splunk, etc.).
+
+```xml NLog.config
+<target name="jsonFile" xsi:type="File" fileName="logs/app.json">
+  <layout xsi:type="JsonLayout" includeEventProperties="true">
+    <attribute name="time"      layout="${longdate}" />
+    <attribute name="level"     layout="${level:uppercase=true}" />
+    <attribute name="logger"    layout="${logger}" />
+    <attribute name="message"   layout="${message}" />
+    <attribute name="exception" layout="${exception:format=tostring}" />
+  </layout>
+</target>
+```
+
+Output:
+
+```json
+{"time":"2025-01-15 12:34:56.7890","level":"INFO","logger":"MyApp.OrderService","message":"Processing order 42","exception":""}
+```
+
+Key `JsonLayout` options:
+
+| Property | Default | Description |
+|---|---|---|
+| `includeEventProperties` | `false` | Automatically include all `LogEventInfo.Properties` as JSON fields |
+| `includeScopeProperties` | `false` | Include all `ScopeContext` properties |
+| `includeGdc` | `false` | Include all `GlobalDiagnosticsContext` entries |
+| `suppressSpaces` | `true` | Compact output with no whitespace |
+| `indentJson` | `false` | Pretty-print with indentation |
+| `maxRecursionLimit` | `1` | Maximum depth for serializing nested objects |
+
+## CsvLayout
+
+`CsvLayout` renders log events as rows in a CSV file. It inherits from `LayoutWithHeaderAndFooter`, so a header row with column names is emitted automatically by default.
+
+```xml NLog.config
+<target name="csv" xsi:type="File" fileName="logs/app.csv">
+  <layout xsi:type="CsvLayout" withHeader="true" delimiter="Comma" quoting="Auto">
+    <column name="Time"      layout="${longdate}" />
+    <column name="Level"     layout="${level}" />
+    <column name="Logger"    layout="${logger}" />
+    <column name="Message"   layout="${message}" />
+    <column name="Exception" layout="${exception:format=tostring}" />
+  </layout>
+</target>
+```
+
+Output:
+
+```
+Time,Level,Logger,Message,Exception
+2025-01-15 12:34:56.7890,Info,MyApp.OrderService,Processing order 42,
+```
+
+Key `CsvLayout` options:
+
+| Property | Default | Description |
+|---|---|---|
+| `withHeader` | `true` | Emit a header row with column names |
+| `delimiter` | `Auto` | `Auto`, `Comma`, `Semicolon`, `Tab`, `Pipe`, `Space`, or `Custom` |
+| `quoting` | `Auto` | `Auto`, `All`, or `Nothing` |
+| `quoteChar` | `"` | Character used to quote values |
+| `customColumnDelimiter` | `""` | Used when `Delimiter` is `Custom` |
+
+<Note>
+If you set the `Header` property directly on `CsvLayout`, the automatic header row generation is disabled.
+</Note>
+
+## XmlLayout
+
+`XmlLayout` renders log events as XML elements. The default root element name is `logevent`.
+
+```xml NLog.config
+<target name="xmlFile" xsi:type="File" fileName="logs/app.xml">
+  <layout xsi:type="XmlLayout" elementName="event" includeEventProperties="true" indentXml="true">
+    <attribute name="time"    layout="${longdate}" />
+    <attribute name="level"   layout="${level}" />
+    <element  name="logger"   value="${logger}" />
+    <element  name="message"  value="${message}" />
+    <element  name="exception" value="${exception:format=tostring}" />
+  </layout>
+</target>
+```
+
+Output:
+
+```xml
+<event time="2025-01-15 12:34:56.7890" level="Info">
+  <logger>MyApp.OrderService</logger>
+  <message>Processing order 42</message>
+  <exception></exception>
+</event>
+```
+
+Key `XmlLayout` options:
+
+| Property | Default | Description |
+|---|---|---|
+| `elementName` | `logevent` | Name of the root XML element |
+| `elementValue` | `""` | Text content of the root element |
+| `elementEncode` | `true` | XML-encode the element value |
+| `includeEventProperties` | `false` | Include all `LogEventInfo.Properties` as child elements |
+| `includeScopeProperties` | `false` | Include all `ScopeContext` properties |
+| `indentXml` | `false` | Pretty-print with indentation and newlines |
+
+## Compound layouts (header and footer)
+
+`CsvLayout` (and any layout inheriting `LayoutWithHeaderAndFooter`) supports `Header` and `Footer` layouts. These render once at the start and end of a log file, not per-event.
+
+```xml NLog.config
+<target name="csv" xsi:type="File" fileName="logs/app.csv">
+  <layout xsi:type="CsvLayout">
+    <header>## Log started ${longdate}</header>
+    <column name="Time"    layout="${longdate}" />
+    <column name="Message" layout="${message}" />
+  </layout>
+</target>
+```
+
+<Note>
+Setting `Header` explicitly on a `CsvLayout` disables automatic column-name header generation.
+</Note>
+
+<CardGroup cols={2}>
+  <Card title="Layout renderers" icon="brackets-curly" href="/layouts/layout-renderers">
+    Full reference for all built-in `${...}` expressions — date, level, exception, context, process, call site, and wrapper renderers.
+  </Card>
+  <Card title="Structured logging" icon="list-tree" href="/layouts/structured-logging">
+    Use message templates and `JsonLayout` to capture queryable structured properties alongside log messages.
+  </Card>
+</CardGroup>

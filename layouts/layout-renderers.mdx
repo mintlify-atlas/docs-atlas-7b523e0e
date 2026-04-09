@@ -1,0 +1,485 @@
+---
+title: "Layout renderers"
+description: "Layout renderers are variables you embed in layout strings to include dynamic values in log output."
+---
+
+Layout renderers are the `${...}` expressions you embed inside a `SimpleLayout` string. Each renderer reads from the current `LogEventInfo` or the surrounding execution context and inserts its value at that position in the output.
+
+**Basic syntax:**
+
+```
+${renderer-name}
+${renderer-name:param=value}
+${renderer-name:param1=value1:param2=value2}
+```
+
+---
+
+## Date and time
+
+### `${longdate}`
+
+Full date and time in `yyyy-MM-dd HH:mm:ss.ffff` format (milliseconds included).
+
+```
+2025-01-15 12:34:56.7890
+```
+
+### `${shortdate}`
+
+Date only in `yyyy-MM-dd` format.
+
+```
+2025-01-15
+```
+
+### `${date}`
+
+Renders the log event timestamp using a custom [.NET format string](https://learn.microsoft.com/en-us/dotnet/standard/base-types/custom-date-and-time-format-strings). The default format is `yyyy/MM/dd HH:mm:ss.fff`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `format` | `yyyy/MM/dd HH:mm:ss.fff` | Any `DateTime.ToString(format)` format string |
+| `universalTime` | `false` | Output UTC time instead of local time |
+
+```
+${date:format=yyyy-MM-dd}
+${date:format=HH\:mm\:ss}
+${date:format=o:universalTime=true}
+```
+
+<Note>
+Colons inside the `format` value must be escaped with a backslash: `HH\:mm\:ss`.
+</Note>
+
+### `${time}`
+
+Time-of-day only. Renders as `HH:mm:ss.mmm`.
+
+### `${ticks}`
+
+The `DateTime.Ticks` value of the log event timestamp. Useful for sorting or high-precision timestamps.
+
+---
+
+## Message and level
+
+### `${message}`
+
+The formatted log message — i.e., the message template with all parameters substituted.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `withException` | `false` | Append the exception's `ToString()` after the message |
+| `exceptionSeparator` | `\|` | Separator string inserted between message and exception |
+| `raw` | `false` | Output the raw message template without substituting parameters |
+
+```
+${message}
+${message:withException=true:exceptionSeparator= -- }
+${message:raw=true}
+```
+
+### `${level}`
+
+The log level name: `Trace`, `Debug`, `Info`, `Warn`, `Error`, or `Fatal`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `uppercase` | `false` | Convert to uppercase (e.g., `INFO`) |
+| `format` | `Name` | `Name`, `FullName`, `FirstCharacter`, `Ordinal`, or `TriLetter` |
+
+```
+${level}                          → Info
+${level:uppercase=true}           → INFO
+${level:format=FullName}          → Information
+${level:format=TriLetter}         → Inf
+${level:format=FirstCharacter}    → I
+${level:format=Ordinal}           → 2
+```
+
+`${level}` is also registered as `${loglevel}`.
+
+### `${logger}`
+
+The fully qualified name of the logger that produced the event (e.g., `MyApp.Services.OrderService`).
+
+| Parameter | Default | Description |
+|---|---|---|
+| `shortName` | `false` | Output only the final segment after the last `.` |
+
+```
+${logger}                  → MyApp.Services.OrderService
+${logger:shortName=true}   → OrderService
+```
+
+---
+
+## Exception
+
+### `${exception}`
+
+Renders details of the exception attached to the log event via `logger.Error(ex, "...")`.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `format` | `message` | Comma-separated list of parts to include (see table below) |
+| `separator` | ` ` | String placed between each part |
+| `innerExceptionSeparator` | ` --> ` | Separator used before inner exception output |
+| `maxInnerExceptionLevel` | `0` | How many levels of inner exceptions to recurse |
+
+**Format parts:**
+
+| Value | Renders |
+|---|---|
+| `message` | `Exception.Message` |
+| `type` | Full exception type name (e.g., `System.IO.FileNotFoundException`) |
+| `shortType` | Short type name (e.g., `FileNotFoundException`) |
+| `toString` | `Exception.ToString()` — includes type, message, and stack trace |
+| `stackTrace` | Only the stack trace |
+| `method` | `Exception.TargetSite` (method where exception was thrown) |
+| `source` | `Exception.Source` (assembly name) |
+| `hresult` | `Exception.HResult` |
+| `data` | `Exception.Data` dictionary entries |
+| `@` | Serialize the exception object as JSON |
+| `properties` | All public properties not in the standard set |
+
+```
+${exception}
+${exception:format=tostring}
+${exception:format=type,message}
+${exception:format=type,message,stacktrace:separator=|}
+${exception:format=tostring:maxInnerExceptionLevel=3}
+```
+
+---
+
+## Context
+
+### `${event-properties}`
+
+Reads a named property from `LogEventInfo.Properties`. This is populated by structured logging message templates or by setting properties directly.
+
+Also registered as `${event-property}` and `${event-context}`.
+
+| Parameter | Description |
+|---|---|
+| `item` | **(Required)** The property key to look up |
+| `format` | Optional format string for value conversion |
+| `objectPath` | Dot-notation path to navigate into a nested object |
+| `ignoreCase` | Property key lookup is case-insensitive (default: `true`) |
+
+```
+${event-properties:item=OrderId}
+${event-properties:item=Customer.Name:objectPath=Name}
+${event-properties:item=Amount:format=C2}
+```
+
+### `${all-event-properties}`
+
+Renders all properties from `LogEventInfo.Properties` as a `key1=value1, key2=value2` formatted string. Useful for debugging.
+
+### `${scopeproperty}`
+
+Reads a property set via `ScopeContext.PushProperty()`. Properties are scoped to the async execution context and are visible to all log events written within the scope.
+
+Also registered as `${mdc}` and `${mdlc}` (deprecated aliases).
+
+| Parameter | Description |
+|---|---|
+| `item` | **(Required)** The property key to look up |
+| `format` | Optional format string for value conversion |
+
+```
+${scopeproperty:item=CorrelationId}
+${scopeproperty:item=UserId}
+```
+
+### `${scopenested}`
+
+Renders the `ScopeContext` nested state stack pushed via `ScopeContext.PushNestedState()`. States are separated by a space by default.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `separator` | ` ` | String placed between stack frames |
+| `bottomFrames` | `0` | Number of frames from the bottom to include (0 = all) |
+| `topFrames` | `0` | Number of frames from the top to include (0 = all) |
+
+Also registered as `${ndc}` and `${ndlc}` (deprecated aliases).
+
+### `${gdc}`
+
+Reads a value from `GlobalDiagnosticsContext` — a global dictionary shared across all threads and loggers.
+
+```
+${gdc:item=ApplicationVersion}
+```
+
+### `${mdc}` / `${mdlc}`
+
+Deprecated aliases for `${scopeproperty}`. Prefer `${scopeproperty}` in new code.
+
+### `${ndc}` / `${ndlc}`
+
+Deprecated aliases for `${scopenested}`. Prefer `${scopenested}` in new code.
+
+---
+
+## Process and system
+
+### `${processid}`
+
+The OS process ID of the current process.
+
+### `${processname}`
+
+The name of the current process (without extension). Use `fullName=true` to include the full path.
+
+### `${processtime}`
+
+The elapsed time since the process started, in `HH:mm:ss.mmm` format.
+
+### `${threadid}`
+
+The managed thread ID of the thread that logged the event.
+
+### `${threadname}`
+
+The name of the thread (`Thread.CurrentThread.Name`). Empty if the thread has no name.
+
+### `${hostname}`
+
+The network hostname of the machine (same as `Environment.MachineName` in most environments).
+
+### `${machinename}`
+
+The machine name (`Environment.MachineName`).
+
+### `${environment}`
+
+Reads an environment variable.
+
+| Parameter | Description |
+|---|---|
+| `variable` | **(Required)** The environment variable name |
+
+```
+${environment:variable=ASPNETCORE_ENVIRONMENT}
+${environment:variable=MY_SERVICE_NAME}
+```
+
+### `${basedir}`
+
+The application base directory (`AppDomain.CurrentDomain.BaseDirectory`). Useful for constructing log file paths.
+
+### `${tempdir}`
+
+The system temporary directory (`Path.GetTempPath()`).
+
+### `${specialfolder}`
+
+A system special folder path via `Environment.GetFolderPath()`.
+
+| Parameter | Description |
+|---|---|
+| `folder` | Any `System.Environment.SpecialFolder` enum value |
+
+```
+${specialfolder:folder=ApplicationData}
+${specialfolder:folder=LocalApplicationData}
+${specialfolder:folder=CommonApplicationData}
+```
+
+---
+
+## Call site
+
+<Warning>
+Call site renderers capture the stack trace at the time of the log call, which has a measurable performance impact. Avoid using them in hot paths.
+</Warning>
+
+### `${callsite}`
+
+The class and method name of the call site where the log statement was written.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `className` | `true` | Include the class name |
+| `methodName` | `true` | Include the method name |
+| `includeNamespace` | `true` | Include the namespace in the class name |
+| `cleanNamesOfAnonymousDelegates` | `false` | Strip generated names for anonymous delegates |
+| `skipFrames` | `0` | Additional stack frames to skip |
+
+```
+${callsite}
+${callsite:includeNamespace=false}
+${callsite:className=false}
+```
+
+### `${callsite-filename}`
+
+The source file name of the call site.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `includeSourcePath` | `true` | Include the full path; set to `false` for filename only |
+
+### `${callsite-linenumber}`
+
+The source file line number of the call site.
+
+### `${stacktrace}`
+
+The full stack trace at the point of the log call.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `format` | `Flat` | `Flat` (single-line) or `DetailedFlat` (with source info) |
+| `topFrames` | `3` | Number of frames to include from the top |
+| `skipFrames` | `0` | Stack frames to skip |
+
+---
+
+## Layout renderer wrappers
+
+Wrappers transform the output of an inner layout renderer. They are applied by wrapping an expression:
+
+```
+${uppercase:inner=${message}}
+${pad:padding=10:inner=${level}}
+```
+
+Most wrappers also support **ambient property** shorthand, letting you apply them directly on the inner renderer:
+
+```
+${level:uppercase=true}
+${message:padding=20}
+```
+
+### `${pad}`
+
+Pads or truncates the inner renderer's output to a fixed width.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `padding` | `0` | Target width. Positive = right-align (left pad), negative = left-align (right pad) |
+| `padCharacter` | ` ` | Character to use for padding |
+| `fixedLength` | `false` | Truncate output to the absolute value of `padding` if it exceeds the target width |
+
+```
+${pad:padding=5:inner=${level}}          →  Info
+${pad:padding=-5:inner=${level}}         → Info
+${level:padding=5}                       →  Info  (ambient shorthand)
+```
+
+### `${uppercase}`
+
+Converts the inner layout's output to uppercase.
+
+```
+${uppercase:inner=${message}}
+${level:uppercase=true}
+```
+
+### `${lowercase}`
+
+Converts the inner layout's output to lowercase.
+
+```
+${lowercase:inner=${logger}}
+```
+
+### `${trim-whitespace}`
+
+Trims leading and trailing whitespace from the inner layout's output.
+
+```
+${trim-whitespace:inner=${message}}
+```
+
+### `${when}`
+
+Outputs the inner layout only when a condition expression evaluates to `true`. Optionally outputs an `else` layout when the condition is false.
+
+| Parameter | Description |
+|---|---|
+| `when` | **(Required)** A condition expression (e.g., `level >= LogLevel.Warn`) |
+| `inner` | Layout to output when the condition is met |
+| `else` | Layout to output when the condition is not met (default: empty) |
+
+```
+${when:when=level >= LogLevel.Error:inner=${message}}
+${when:when=length('${exception}') > 0:inner= EX\: ${exception:format=shortType}:else=}
+```
+
+### `${whenEmpty}`
+
+Outputs a fallback layout when the inner layout produces an empty string.
+
+| Parameter | Description |
+|---|---|
+| `inner` | The primary layout to attempt |
+| `whenEmpty` | **(Required)** Fallback layout rendered when `inner` is empty |
+
+```
+${whenEmpty:inner=${threadname}:whenEmpty=${threadid}}
+${whenEmpty:inner=${event-properties:item=RequestId}:whenEmpty=N/A}
+```
+
+### `${cached}`
+
+Caches the rendered value of the inner layout and re-uses it without re-rendering until the cache is cleared.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `cached` | `true` | Enable or disable caching |
+| `clearCache` | `OnInit,OnClose` | When to clear the cache (flags: `None`, `OnInit`, `OnClose`) |
+| `cachedSeconds` | `0` | Time-based cache expiry in seconds (0 = no expiry) |
+
+```
+${cached:inner=${processid}:cachedSeconds=60}
+${processname:cached=true}
+```
+
+### `${replace}`
+
+Performs a string search-and-replace on the inner layout's output.
+
+| Parameter | Description |
+|---|---|
+| `searchFor` | **(Required)** String or regex pattern to search for |
+| `replaceWith` | Replacement string (default: empty) |
+| `regex` | Treat `searchFor` as a regex pattern (default: `false`) |
+| `ignoreCase` | Case-insensitive search (default: `false`) |
+| `wholeWords` | Match whole words only (default: `false`) |
+
+```
+${replace:searchFor=foo:replaceWith=bar:inner=${message}}
+${replace:searchFor=\d+:replaceWith=###:regex=true:inner=${message}}
+```
+
+### Other wrappers
+
+| Renderer | Description |
+|---|---|
+| `${json-encode}` | JSON-encodes the inner layout's output |
+| `${xml-encode}` | XML-encodes the inner layout's output |
+| `${url-encode}` | URL-encodes the inner layout's output |
+| `${replace-newlines}` | Replaces newlines with a configurable string |
+| `${left}` | Truncates output to the leftmost N characters |
+| `${right}` | Truncates output to the rightmost N characters |
+| `${substring}` | Extracts a substring from the output |
+| `${wrapline}` | Wraps long lines at a character boundary |
+| `${rot13}` | Applies ROT13 encoding (useful for obfuscating values in logs) |
+| `${filesystem-normalize}` | Replaces characters not valid in file/directory names |
+| `${onexception}` | Outputs the inner layout only when an exception is present |
+| `${onHasProperties}` | Outputs the inner layout only when `LogEventInfo.HasProperties` is true |
+
+<CardGroup cols={2}>
+  <Card title="Structured logging" icon="list-tree" href="/layouts/structured-logging">
+    Use message templates to capture named properties that can be queried in `${event-properties}`.
+  </Card>
+  <Card title="Scope context" icon="layers" href="/layouts/scope-context">
+    Enrich all log events within an async scope using `ScopeContext.PushProperty()` and `${scopeproperty}`.
+  </Card>
+</CardGroup>

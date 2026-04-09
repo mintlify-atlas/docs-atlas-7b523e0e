@@ -1,0 +1,154 @@
+---
+title: "Log Levels"
+description: "Understand NLog's six log levels and how to use them effectively."
+---
+
+NLog defines six logging levels ordered by severity, plus a special `Off` level used to disable logging entirely. Each level has an ordinal value — the higher the ordinal, the more severe the event.
+
+## Level reference
+
+| Level | Ordinal | Typical use |
+|---|---|---|
+| `Trace` | 0 | Step-by-step execution details. Development and deep debugging only. Rarely enabled in production. |
+| `Debug` | 1 | Internal events of interest while debugging application behavior. |
+| `Info` | 2 | Normal progress and application lifecycle events (startup, shutdown, key milestones). |
+| `Warn` | 3 | Recoverable failures, validation issues, or temporary degraded conditions. |
+| `Error` | 4 | Functionality has failed or an exception has been caught. Requires investigation. |
+| `Fatal` | 5 | Critical failure. Application is about to abort or has entered an unrecoverable state. |
+| `Off` | 6 | Special sentinel value. Not a loggable level — used in rules to disable logging completely. |
+
+These are defined as static fields on `NLog.LogLevel` (see `LogLevel.cs`):
+
+```csharp
+LogLevel.Trace  // Ordinal = 0
+LogLevel.Debug  // Ordinal = 1
+LogLevel.Info   // Ordinal = 2
+LogLevel.Warn   // Ordinal = 3
+LogLevel.Error  // Ordinal = 4
+LogLevel.Fatal  // Ordinal = 5
+LogLevel.Off    // Ordinal = 6
+```
+
+## Logging at each level
+
+```csharp
+var logger = LogManager.GetCurrentClassLogger();
+
+logger.Trace("Entering method {MethodName}", nameof(ProcessOrder));
+logger.Debug("Retrieved {Count} records from cache", records.Count);
+logger.Info("Application started. Version={Version}", version);
+logger.Warn("Retry {Attempt}/{Max} for endpoint {Url}", attempt, max, url);
+logger.Error(ex, "Failed to process order {OrderId}", orderId);
+logger.Fatal(ex, "Unhandled exception. Shutting down.");
+```
+
+Use the `{placeholder}` structured logging syntax to avoid string allocation when the level is disabled.
+
+## Checking if a level is enabled
+
+Each logger exposes boolean properties so you can guard expensive computations:
+
+```csharp
+if (logger.IsTraceEnabled)
+{
+    // Only pay the cost of building this string when Trace is active
+    logger.Trace("State dump: {State}", BuildExpensiveStateDump());
+}
+
+if (logger.IsDebugEnabled) logger.Debug("...");
+if (logger.IsInfoEnabled)  logger.Info("...");
+if (logger.IsWarnEnabled)  logger.Warn("...");
+if (logger.IsErrorEnabled) logger.Error("...");
+if (logger.IsFatalEnabled) logger.Fatal("...");
+```
+
+<Note>
+  When you use structured log methods with `{placeholder}` arguments, NLog already avoids string formatting when the level is disabled. The `IsXxxEnabled` guards are mainly useful when constructing arguments is itself expensive.
+</Note>
+
+## Level filtering in rules
+
+### minlevel and maxlevel
+
+Include events within an inclusive range:
+
+```xml
+<!-- Info, Warn, Error, Fatal -->
+<logger name="*" minlevel="Info" writeTo="console" />
+
+<!-- Warn and Error only -->
+<logger name="*" minlevel="Warn" maxlevel="Error" writeTo="alertFile" />
+```
+
+### level
+
+Match a single exact level:
+
+```xml
+<logger name="*" level="Fatal" writeTo="pagerduty" />
+```
+
+### levels
+
+Match a comma-separated set of levels:
+
+```xml
+<logger name="*" levels="Debug,Warn,Fatal" writeTo="specialTarget" />
+```
+
+### Programmatic level filtering
+
+```csharp
+// Events from Info up
+config.AddRule(LogLevel.Info, LogLevel.Fatal, target);
+
+// Exactly one level
+config.AddRuleForOneLevel(LogLevel.Error, target);
+
+// All levels (Trace through Fatal)
+config.AddRuleForAllLevels(target);
+```
+
+## Global minimum threshold
+
+`LogManager.GlobalThreshold` is a fast gate applied before any rules are evaluated. Events below this level are discarded immediately, regardless of what the rules say.
+
+```csharp
+// Discard Trace and Debug everywhere, regardless of rules
+LogManager.GlobalThreshold = LogLevel.Info;
+```
+
+In XML:
+
+```xml
+<nlog globalThreshold="Info">
+  ...
+</nlog>
+```
+
+<Warning>
+  `GlobalThreshold` overrides all rules. Setting it to `Error` will suppress `Info` and `Debug` even if a rule routes them to a target.
+</Warning>
+
+## Choosing the right level
+
+<Steps>
+  <Step title="Trace">
+    Use for the most granular messages: loop iterations, individual SQL parameters, raw HTTP request bodies. These are almost always disabled in production via a `minlevel="Debug"` rule.
+  </Step>
+  <Step title="Debug">
+    Use for events that help diagnose problems: cache hits/misses, branch decisions, resolved configuration values. Enable in staging or when investigating an issue.
+  </Step>
+  <Step title="Info">
+    Use for events that describe normal operation: service started, job completed, user authenticated. Info is typically always enabled and collected in production.
+  </Step>
+  <Step title="Warn">
+    Use for degraded-but-recoverable conditions: a retry was needed, a deprecated API was called, a value fell back to a default. Warns should trigger investigation but not immediate action.
+  </Step>
+  <Step title="Error">
+    Use when a specific operation failed and an exception was caught. The application continues running, but the affected feature is broken for this request.
+  </Step>
+  <Step title="Fatal">
+    Use only when the application cannot continue. Typically written just before a forced shutdown or an `Environment.Exit()` call.
+  </Step>
+</Steps>

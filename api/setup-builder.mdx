@@ -1,0 +1,155 @@
+---
+title: "Setup Builder"
+description: "The fluent API for configuring NLog before first use, accessed via LogManager.Setup()."
+---
+
+`LogManager.Setup()` returns an `ISetupBuilder` that lets you configure NLog's LogFactory, load extensions, and set up configuration — all in a single fluent chain before any logging occurs.
+
+## Entry point
+
+```csharp
+// Returns ISetupBuilder wrapping the default LogFactory singleton
+ISetupBuilder builder = LogManager.Setup();
+
+// Get a logger immediately after setup
+Logger logger = LogManager.Setup()
+    .LoadConfigurationFromFile("NLog.config")
+    .GetCurrentClassLogger();
+```
+
+## SetupLogFactory
+
+Configure LogFactory options before loading config:
+
+```csharp
+LogManager.Setup().SetupLogFactory(factory => factory
+    .SetGlobalThreshold(LogLevel.Debug)         // global minimum level
+    .SetThrowExceptions(false)                   // swallow NLog internal errors
+    .SetThrowConfigExceptions(true)              // throw on config load errors
+    .SetAutoShutdown(true)                       // flush on AppDomain exit
+    .SetTimeSourcAccurateUtc()                   // use high-accuracy UTC timestamps
+);
+```
+
+<ParamField path="SetGlobalThreshold(LogLevel)" type="method">
+  Sets the global minimum log level. Events below this level are discarded before any rule evaluation. Equivalent to `LogManager.GlobalThreshold`.
+</ParamField>
+
+<ParamField path="SetThrowExceptions(bool)" type="method">
+  When `true`, NLog throws exceptions on internal errors. Default is `false` (errors are swallowed to protect the host application).
+</ParamField>
+
+<ParamField path="SetThrowConfigExceptions(bool)" type="method">
+  When `true`, NLog throws exceptions when the configuration file cannot be loaded or parsed. Useful to catch misconfiguration early during startup.
+</ParamField>
+
+<ParamField path="SetAutoShutdown(bool)" type="method">
+  When `true` (default), NLog automatically flushes and closes targets when the AppDomain exits. Set to `false` if you call `LogManager.Shutdown()` manually.
+</ParamField>
+
+## SetupExtensions
+
+Register custom targets, layout renderers, or load extension assemblies:
+
+```csharp
+LogManager.Setup().SetupExtensions(ext => ext
+    .RegisterTarget<MyCustomTarget>("MyTarget")
+    .RegisterLayoutRenderer<CorrelationIdRenderer>("correlation-id")
+    .RegisterAssembly("MyApp.NLogExtensions")
+);
+```
+
+<ParamField path="RegisterTarget<T>(string name)" type="method">
+  Registers a custom `Target` subclass under the given name. The name is used as `xsi:type` in XML config or as the type identifier in programmatic config.
+</ParamField>
+
+<ParamField path="RegisterLayoutRenderer<T>(string name)" type="method">
+  Registers a custom `LayoutRenderer` subclass under the given name. The name is used as `${name}` in layout strings.
+</ParamField>
+
+<ParamField path="RegisterAssembly(string assemblyName)" type="method">
+  Scans the named assembly for types decorated with `[Target]` and `[LayoutRenderer]` attributes and registers them automatically.
+</ParamField>
+
+<ParamField path="RegisterAssembly(Assembly assembly)" type="method">
+  Scans a loaded `Assembly` instance for NLog extension types.
+</ParamField>
+
+## LoadConfigurationFromFile
+
+Load an XML NLog config file:
+
+```csharp
+LogManager.Setup().LoadConfigurationFromFile("NLog.config");
+
+// Specify path explicitly (useful in containerized or non-default working dirs)
+LogManager.Setup().LoadConfigurationFromFile(
+    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NLog.config"),
+    optional: false   // throw if not found
+);
+```
+
+## LoadConfiguration (inline programmatic config)
+
+Build configuration entirely in code without an XML file:
+
+```csharp
+LogManager.Setup().LoadConfiguration(builder =>
+{
+    builder.ForLogger()
+           .FilterMinLevel(LogLevel.Info)
+           .WriteToFile("app.log", layout: "${longdate} ${level} ${message} ${exception:format=tostring}")
+           .WriteToColoredConsole();
+});
+```
+
+<Tip>
+`LoadConfiguration` with the fluent builder is the preferred approach for AOT-compiled applications, since it avoids XML parsing and reflection-based type discovery.
+</Tip>
+
+## Getting loggers
+
+After setup, retrieve a logger directly from the builder:
+
+```csharp
+// Logger named after the calling class
+var logger = LogManager.Setup()
+    .LoadConfigurationFromFile()
+    .GetCurrentClassLogger();
+
+// Explicitly named logger
+var logger = LogManager.Setup()
+    .LoadConfigurationFromFile()
+    .GetLogger("MyComponent");
+```
+
+## Full example
+
+```csharp Program.cs
+using NLog;
+
+// Configure everything before first log call
+LogManager.Setup()
+    .SetupLogFactory(f => f
+        .SetGlobalThreshold(LogLevel.Debug)
+        .SetThrowConfigExceptions(true))
+    .SetupExtensions(ext => ext
+        .RegisterTarget<MyAlertTarget>("Alert"))
+    .LoadConfigurationFromFile("NLog.config");
+
+var logger = LogManager.GetCurrentClassLogger();
+
+try
+{
+    logger.Info("Application starting");
+    RunApp();
+}
+finally
+{
+    LogManager.Shutdown();
+}
+```
+
+<Note>
+`LogManager.Setup()` returns `ISetupBuilder` which wraps the default `LogFactory` singleton. If you use multiple `LogFactory` instances, call `logFactory.Setup()` directly on the instance instead.
+</Note>

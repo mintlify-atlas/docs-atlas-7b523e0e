@@ -1,0 +1,297 @@
+---
+title: "LogFactory"
+description: "Creates and manages logger instances. LogManager wraps the default singleton LogFactory."
+---
+
+`LogFactory` is the core class that creates and caches `Logger` instances and holds the active `LoggingConfiguration`. The static `LogManager` class wraps a singleton `LogFactory` — in most applications you interact with `LogManager` directly and never need to construct a `LogFactory` yourself.
+
+Use `LogFactory` directly when you need:
+- Multiple isolated logging subsystems with independent configurations.
+- A custom factory with its own `ServiceRepository` registrations.
+- Full `IDisposable` / `IAsyncDisposable` lifecycle control.
+
+<Note>
+`LogFactory` implements both `IDisposable` and (on .NET Standard 2.1+ / .NET) `IAsyncDisposable`. Disposing the factory closes all targets and releases resources.
+</Note>
+
+---
+
+## Constructors
+
+<ResponseField name="LogFactory()" type="LogFactory">
+  Creates a new `LogFactory` instance with default settings. Configuration is not loaded automatically; call `Setup().LoadConfigurationFromFile()` or assign `Configuration` explicitly.
+
+  ```csharp
+  var factory = new LogFactory();
+  ```
+</ResponseField>
+
+---
+
+## Properties
+
+<ResponseField name="Configuration" type="LoggingConfiguration?">
+  Gets or sets the active logging configuration. Assigning a new value closes the old configuration (flushing all targets) and activates the new one. All existing loggers are automatically reconfigured — no need to call `ReconfigExistingLoggers()`.
+
+  ```csharp
+  var config = new LoggingConfiguration();
+  config.AddRuleForAllLevels(new ConsoleTarget("console"));
+  factory.Configuration = config;
+  ```
+</ResponseField>
+
+<ResponseField name="GlobalThreshold" type="LogLevel">
+  Gets or sets the global minimum log level. Events below this threshold are discarded before reaching targets. Changing the value automatically reconfigures all loggers.
+
+  ```csharp
+  factory.GlobalThreshold = LogLevel.Warn;
+  ```
+</ResponseField>
+
+<ResponseField name="ThrowExceptions" type="bool">
+  Gets or sets whether NLog throws exceptions on internal errors. Defaults to `false`.
+</ResponseField>
+
+<ResponseField name="ThrowConfigExceptions" type="bool?">
+  Gets or sets whether `NLogConfigurationException` is thrown on configuration errors. When `null`, falls back to `ThrowExceptions`.
+</ResponseField>
+
+<ResponseField name="AutoShutdown" type="bool">
+  Gets or sets whether `Shutdown()` is called automatically on `AppDomain.Unload` or `AppDomain.ProcessExit`. Defaults to `true`.
+</ResponseField>
+
+<ResponseField name="KeepVariablesOnReload" type="bool">
+  Gets or sets whether API-assigned configuration variables are preserved when the configuration is reloaded. Defaults to `true`.
+</ResponseField>
+
+<ResponseField name="DefaultCultureInfo" type="CultureInfo?">
+  Gets or sets the default culture used for formatting log event messages. Defaults to `null`, which uses `CultureInfo.CurrentCulture`.
+</ResponseField>
+
+<ResponseField name="ServiceRepository" type="ServiceRepository">
+  Repository of interfaces used internally by NLog (e.g., `ILogMessageFormatter`). Override registrations here to customize NLog behavior without subclassing.
+</ResponseField>
+
+---
+
+## Getting loggers
+
+<ResponseField name="GetCurrentClassLogger()" type="Logger">
+  Returns a `Logger` whose name equals the fully qualified name of the calling class. Captures a stack frame — avoid calling in a loop.
+
+  ```csharp
+  private static readonly Logger _logger = LogManager.LogFactory.GetCurrentClassLogger();
+  ```
+</ResponseField>
+
+<ResponseField name="GetCurrentClassLogger<T>()" type="T">
+  Returns a custom logger of type `T` (which must inherit `Logger` and have a parameterless constructor) named after the calling class.
+
+  <ParamField path="T" type="Logger subclass">
+    The concrete logger type to instantiate.
+  </ParamField>
+
+  ```csharp
+  private static readonly MyLogger _logger = factory.GetCurrentClassLogger<MyLogger>();
+  ```
+</ResponseField>
+
+<ResponseField name="GetLogger(string name)" type="Logger">
+  Returns a `Logger` with the specified name.
+
+  <ParamField path="name" type="string" required>
+    The logger name.
+  </ParamField>
+
+  ```csharp
+  Logger logger = factory.GetLogger("MyApp.DataLayer");
+  ```
+</ResponseField>
+
+<ResponseField name="GetLogger<T>(string name)" type="T">
+  Returns a custom logger of type `T` with the specified name.
+
+  <ParamField path="name" type="string" required>
+    The logger name.
+  </ParamField>
+
+  ```csharp
+  MyLogger logger = factory.GetLogger<MyLogger>("MyApp.DataLayer");
+  ```
+</ResponseField>
+
+<ResponseField name="CreateNullLogger()" type="Logger">
+  Returns a logger that silently discards all messages.
+</ResponseField>
+
+---
+
+## Fluent setup
+
+<ResponseField name="Setup()" type="ISetupBuilder">
+  Returns an `ISetupBuilder` for fluent configuration of the factory.
+
+  ```csharp
+  factory.Setup()
+      .SetupLogFactory(f => f.SetGlobalThreshold(LogLevel.Info))
+      .LoadConfiguration(c => c.ForLogger().WriteTo(new ConsoleTarget()));
+  ```
+</ResponseField>
+
+<ResponseField name="Setup(Action<ISetupBuilder> setupBuilder)" type="LogFactory">
+  Overload accepting a delegate. Returns the factory for method chaining.
+
+  ```csharp
+  factory.Setup(s => s.LoadConfigurationFromFile("NLog.config"));
+  ```
+</ResponseField>
+
+---
+
+## Reconfiguring
+
+<ResponseField name="ReconfigExistingLoggers()" type="void">
+  Recalculates targets and filters for all cached loggers. Call after programmatic changes to the configuration.
+</ResponseField>
+
+<ResponseField name="ReconfigExistingLoggers(bool purgeObsoleteLoggers)" type="void">
+  Same as above. Pass `true` to also remove garbage-collected logger entries from the cache.
+</ResponseField>
+
+---
+
+## Flushing
+
+<ResponseField name="Flush()" type="void">
+  Flushes all pending messages in asynchronous targets (default 15-second timeout).
+</ResponseField>
+
+<ResponseField name="Flush(TimeSpan timeout)" type="void">
+  Flush with an explicit timeout.
+
+  <ParamField path="timeout" type="TimeSpan" required>
+    Maximum time to wait.
+  </ParamField>
+</ResponseField>
+
+<ResponseField name="Flush(int timeoutMilliseconds)" type="void">
+  Flush with a timeout in milliseconds.
+</ResponseField>
+
+<ResponseField name="FlushAsync(CancellationToken cancellationToken)" type="Task">
+  Asynchronously flush all pending messages.
+
+  <ParamField path="cancellationToken" type="CancellationToken" required>
+    Token to cancel the operation.
+  </ParamField>
+
+  ```csharp
+  await factory.FlushAsync(CancellationToken.None);
+  ```
+</ResponseField>
+
+---
+
+## Suspending logging
+
+<ResponseField name="SuspendLogging()" type="IDisposable">
+  Suspends logging. Returns an `IDisposable` whose `Dispose()` calls `ResumeLogging()`.
+
+  ```csharp
+  using (factory.SuspendLogging())
+  {
+      // Logging disabled
+  }
+  ```
+</ResponseField>
+
+<ResponseField name="ResumeLogging()" type="void">
+  Resumes logging after `SuspendLogging()`.
+</ResponseField>
+
+<ResponseField name="IsLoggingEnabled()" type="bool">
+  Returns `true` when logging is active.
+</ResponseField>
+
+---
+
+## Shutdown and disposal
+
+<ResponseField name="Shutdown()" type="void">
+  Flushes and closes the current configuration, disabling all loggers.
+
+  ```csharp
+  factory.Shutdown();
+  ```
+</ResponseField>
+
+<ResponseField name="Dispose()" type="void">
+  Implements `IDisposable`. Closes targets and releases resources synchronously.
+
+  ```csharp
+  factory.Dispose();
+  ```
+</ResponseField>
+
+<ResponseField name="DisposeAsync()" type="ValueTask">
+  Implements `IAsyncDisposable` (.NET Standard 2.1+ / .NET). Flushes asynchronously before disposing.
+
+  ```csharp
+  await using var factory = new LogFactory();
+  ```
+</ResponseField>
+
+---
+
+## Events
+
+<ResponseField name="ConfigurationChanged" type="EventHandler<LoggingConfigurationChangedEventArgs>">
+  Raised when `Configuration` is assigned or unloaded. `LoggingConfigurationChangedEventArgs.ActivatedConfiguration` is `null` at shutdown.
+</ResponseField>
+
+---
+
+## When to use LogFactory vs LogManager
+
+| Scenario | Use |
+|---|---|
+| Single-process application with one logging pipeline | `LogManager` (static singleton) |
+| Library that should not affect the host application's logging | `new LogFactory()` |
+| Multiple isolated subsystems with different configurations | `new LogFactory()` per subsystem |
+| Plugin host that loads/unloads subsystems independently | `new LogFactory()` + `IDisposable` |
+
+---
+
+## Example: multiple factories
+
+```csharp
+using NLog;
+using NLog.Config;
+using NLog.Targets;
+
+// Application-wide logging
+var appFactory = new LogFactory();
+appFactory.Setup()
+    .LoadConfiguration(c => c
+        .ForLogger()
+        .FilterMinLevel(LogLevel.Info)
+        .WriteTo(new FileTarget("app-log") { FileName = "app.log" }));
+
+// Separate audit logging pipeline
+var auditFactory = new LogFactory();
+auditFactory.Setup()
+    .LoadConfiguration(c => c
+        .ForLogger()
+        .FilterMinLevel(LogLevel.Info)
+        .WriteTo(new FileTarget("audit-log") { FileName = "audit.log" }));
+
+Logger appLogger  = appFactory.GetLogger("App");
+Logger auditLogger = auditFactory.GetLogger("Audit");
+
+appLogger.Info("Application started");
+auditLogger.Info("User {UserId} authenticated", userId);
+
+// Clean up independently
+appFactory.Dispose();
+auditFactory.Dispose();
+```

@@ -1,0 +1,267 @@
+---
+title: "Scope context"
+description: "Use ScopeContext to add contextual properties and nested states to all log events within an async scope."
+---
+
+`ScopeContext` stores ambient state in the **async execution context**. Any log event written while a scope is active can include that state in its output — without passing it through method parameters or logging it explicitly on every call.
+
+It is the NLog equivalent of `ILogger.BeginScope()` in `Microsoft.Extensions.Logging`, and it replaces the older `MappedDiagnosticsContext` (MDC), `MappedDiagnosticsLogicalContext` (MDLC), `NestedDiagnosticsContext` (NDC), and `NestedDiagnosticsLogicalContext` (NDLC) APIs.
+
+```csharp
+using (ScopeContext.PushProperty("CorrelationId", correlationId))
+using (ScopeContext.PushProperty("UserId", userId))
+{
+    logger.Info("Processing order {OrderId}", orderId);
+    // Log output includes CorrelationId and UserId automatically
+}
+```
+
+## Thread safety
+
+`ScopeContext` uses `AsyncLocal<T>` on .NET Core and .NET 4.6+, ensuring scope state flows correctly through `async`/`await` without leaking across unrelated tasks. On older .NET Framework targets, it falls back to `System.Runtime.Remoting.CallContext`.
+
+<Note>
+Because `ScopeContext` is `AsyncLocal`-based, a child task or thread inherits the parent's scope state at the moment it is created. Changes made inside the child do not propagate back to the parent.
+</Note>
+
+---
+
+## Pushing scope properties
+
+### `ScopeContext.PushProperty(string key, object value)`
+
+Adds a single named property to the current scope. Returns an `IDisposable` — disposing it removes the property.
+
+```csharp
+IDisposable scope = ScopeContext.PushProperty("CorrelationId", "abc-123");
+// ... later
+scope.Dispose();
+```
+
+Use a `using` statement to scope the property automatically to a block:
+
+```csharp
+using (ScopeContext.PushProperty("CorrelationId", correlationId))
+{
+    logger.Info("Handling request");
+} // CorrelationId is removed here
+```
+
+### Multiple properties at once
+
+Use `ScopeContext.PushProperties()` to push a collection of key-value pairs in a single allocation-efficient operation:
+
+```csharp
+var props = new[]
+{
+    new KeyValuePair<string, object>("CorrelationId", correlationId),
+    new KeyValuePair<string, object>("TenantId", tenantId),
+};
+
+using (ScopeContext.PushProperties(props))
+{
+    logger.Info("Processing request");
+}
+```
+
+### Properties and nested state together
+
+`ScopeContext.PushNestedStateProperties()` pushes both a nested state value and a set of properties in one call:
+
+```csharp
+using (ScopeContext.PushNestedStateProperties("RequestHandler", props))
+{
+    logger.Info("Inside request handler");
+}
+```
+
+---
+
+## Pushing nested state
+
+### `ScopeContext.PushNestedState(object state)`
+
+Adds a value to the nested state stack. The stack is useful for recording a trail of activity names or breadcrumbs.
+
+```csharp
+using (ScopeContext.PushNestedState("DatabaseQuery"))
+{
+    logger.Debug("Executing query");
+}
+```
+
+Multiple `PushNestedState` calls stack on top of each other within the same scope:
+
+```csharp
+using (ScopeContext.PushNestedState("OrderController"))
+using (ScopeContext.PushNestedState("ProcessPayment"))
+{
+    logger.Info("Charging card");
+    // Nested stack: OrderController > ProcessPayment
+}
+```
+
+---
+
+## Accessing scope context in layouts
+
+### `${scopeproperty:item=Key}`
+
+Renders a single named scope property. Throws a configuration exception if `item` is not set.
+
+```
+${scopeproperty:item=CorrelationId}
+${scopeproperty:item=TenantId}
+```
+
+### `${scopenested}`
+
+Renders the entire nested state stack as a space-separated string (or using a custom separator).
+
+| Parameter | Default | Description |
+|---|---|---|
+| `separator` | ` ` | String placed between stack frames |
+| `topFrames` | `0` | Number of frames from the top to include (0 = all) |
+| `bottomFrames` | `0` | Number of frames from the bottom to include (0 = all) |
+
+```
+${scopenested}
+${scopenested:separator= > }
+```
+
+### Including scope properties in JsonLayout
+
+Set `includeScopeProperties="true"` on `JsonLayout` to automatically include all current scope properties as JSON fields:
+
+```xml NLog.config
+<layout xsi:type="JsonLayout" includeEventProperties="true" includeScopeProperties="true">
+  <attribute name="timestamp" layout="${date:format=o:universalTime=true}" />
+  <attribute name="level"     layout="${level}" />
+  <attribute name="message"   layout="${message}" />
+</layout>
+```
+
+Any properties pushed with `ScopeContext.PushProperty()` appear as top-level JSON fields alongside the explicit attributes.
+
+---
+
+## ScopeContext vs. deprecated context APIs
+
+| Old API | New equivalent |
+|---|---|
+| `MappedDiagnosticsContext` (MDC) | `ScopeContext.PushProperty()` |
+| `MappedDiagnosticsLogicalContext` (MDLC) | `ScopeContext.PushProperty()` |
+| `NestedDiagnosticsContext` (NDC) | `ScopeContext.PushNestedState()` |
+| `NestedDiagnosticsLogicalContext` (NDLC) | `ScopeContext.PushNestedState()` |
+
+The `${mdc}` and `${mdlc}` layout renderers are aliases for `${scopeproperty}`. The `${ndc}` and `${ndlc}` renderers are aliases for `${scopenested}`. They continue to work but should be replaced in new code.
+
+<Warning>
+MDC is **not** async-safe. It uses a thread-static dictionary, so values can leak between requests in async ASP.NET Core applications. Always use `ScopeContext` (which is `AsyncLocal`-based) in async code.
+</Warning>
+
+---
+
+## Integration with Microsoft.Extensions.Logging
+
+When you use NLog as a `Microsoft.Extensions.Logging` provider (via `NLog.Extensions.Logging`), calls to `ILogger.BeginScope()` are forwarded to `ScopeContext` automatically. This means scope properties set by ASP.NET Core or other MEL-aware middleware appear in NLog output through the standard `${scopeproperty}` renderer.
+
+```csharp
+// This MEL call ...
+using (_logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
+{
+    _logger.LogInformation("Handling request");
+}
+
+// ... is equivalent to this NLog call:
+using (ScopeContext.PushProperty("CorrelationId", correlationId))
+{
+    logger.Info("Handling request");
+}
+```
+
+---
+
+## Example: adding correlation ID in ASP.NET Core
+
+<Steps>
+  <Step title="Register NLog as the logging provider">
+    ```csharp Program.cs
+    builder.Logging.ClearProviders();
+    builder.Host.UseNLog();
+    ```
+  </Step>
+  <Step title="Add a middleware to push a correlation ID">
+    ```csharp CorrelationMiddleware.cs
+    public class CorrelationMiddleware
+    {
+        private readonly RequestDelegate _next;
+
+        public CorrelationMiddleware(RequestDelegate next) => _next = next;
+
+        public async Task InvokeAsync(HttpContext context)
+        {
+            var correlationId = context.Request.Headers["X-Correlation-ID"]
+                .FirstOrDefault() ?? Guid.NewGuid().ToString();
+
+            context.Response.Headers["X-Correlation-ID"] = correlationId;
+
+            using (ScopeContext.PushProperty("CorrelationId", correlationId))
+            using (ScopeContext.PushProperty("RequestPath", context.Request.Path))
+            {
+                await _next(context);
+            }
+        }
+    }
+    ```
+  </Step>
+  <Step title="Register the middleware">
+    ```csharp Program.cs
+    app.UseMiddleware<CorrelationMiddleware>();
+    ```
+  </Step>
+  <Step title="Configure the layout to include scope properties">
+    ```xml NLog.config
+    <target name="file" xsi:type="File" fileName="logs/app.json">
+      <layout xsi:type="JsonLayout" includeEventProperties="true" includeScopeProperties="true">
+        <attribute name="timestamp"     layout="${date:format=o:universalTime=true}" />
+        <attribute name="level"         layout="${level:lowercase=true}" />
+        <attribute name="logger"        layout="${logger}" />
+        <attribute name="message"       layout="${message}" />
+        <attribute name="exception"     layout="${exception:format=tostring}" />
+      </layout>
+    </target>
+    ```
+
+    Every log event produced during a request now includes `CorrelationId` and `RequestPath` as JSON fields automatically.
+  </Step>
+</Steps>
+
+### Output
+
+```json
+{"timestamp":"2025-01-15T12:34:56.789Z","level":"info","logger":"MyApp.OrderService","message":"Processing order 42","exception":"","CorrelationId":"d4f3e2a1-...","RequestPath":"/api/orders","OrderId":42}
+```
+
+---
+
+## Clearing scope context
+
+To remove all scope state for the current async context — useful in tests or long-running background tasks:
+
+```csharp
+ScopeContext.Clear();
+```
+
+<Warning>
+`ScopeContext.Clear()` removes all properties and nested states in the current async context. In a web application, prefer scoped `using` blocks so cleanup happens automatically at the end of each request.
+</Warning>
+
+<CardGroup cols={2}>
+  <Card title="Layout renderers" icon="brackets-curly" href="/layouts/layout-renderers">
+    Reference for `${scopeproperty}`, `${scopenested}`, and all other built-in renderers.
+  </Card>
+  <Card title="Structured logging" icon="list-tree" href="/layouts/structured-logging">
+    Combine scope context with message templates and `JsonLayout` for fully queryable structured logs.
+  </Card>
+</CardGroup>

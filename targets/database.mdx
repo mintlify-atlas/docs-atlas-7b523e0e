@@ -1,0 +1,238 @@
+---
+title: "Database Target"
+description: "Write log messages to a relational database using the NLog.Database extension package."
+---
+
+The `Database` target writes log events to a relational database using ADO.NET. It supports any ADO.NET provider (SQL Server, PostgreSQL, MySQL, SQLite, Oracle, etc.) and allows full control over the INSERT statement and parameter bindings.
+
+<Note>
+The `Database` target is **not** included in the core `NLog` package. It is distributed separately in the `NLog.Database` NuGet package.
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Install the NuGet package">
+    ```bash
+    dotnet add package NLog.Database
+    ```
+  </Step>
+  <Step title="Install your ADO.NET provider">
+    For SQL Server:
+    ```bash
+    dotnet add package Microsoft.Data.SqlClient
+    ```
+    For PostgreSQL:
+    ```bash
+    dotnet add package Npgsql
+    ```
+    For MySQL:
+    ```bash
+    dotnet add package MySql.Data
+    ```
+    For SQLite:
+    ```bash
+    dotnet add package Microsoft.Data.Sqlite
+    ```
+  </Step>
+  <Step title="Register the extension in NLog.config">
+    ```xml
+    <nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <extensions>
+        <add assembly="NLog.Database" />
+      </extensions>
+      <!-- targets and rules go here -->
+    </nlog>
+    ```
+  </Step>
+</Steps>
+
+## Log Table Schema
+
+Create a table to hold log entries. Adjust column types as needed for your database:
+
+```sql
+CREATE TABLE Logs (
+    Id          INT            NOT NULL IDENTITY PRIMARY KEY,
+    Logged      DATETIME2      NOT NULL,
+    Level       NVARCHAR(5)    NOT NULL,
+    Logger      NVARCHAR(300)  NOT NULL,
+    Message     NVARCHAR(MAX)  NOT NULL,
+    Exception   NVARCHAR(MAX)  NULL,
+    MachineName NVARCHAR(200)  NULL,
+    ThreadId    NVARCHAR(20)   NULL
+);
+```
+
+## Basic Configuration
+
+```xml
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <extensions>
+    <add assembly="NLog.Database" />
+  </extensions>
+
+  <targets>
+    <target xsi:type="Database"
+            name="database"
+            dbProvider="Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient"
+            connectionString="Server=myserver;Database=Logs;Integrated Security=true;">
+
+      <commandText>
+        INSERT INTO Logs (Logged, Level, Logger, Message, Exception, MachineName, ThreadId)
+        VALUES (@logged, @level, @logger, @message, @exception, @machineName, @threadId)
+      </commandText>
+
+      <parameter name="@logged"      layout="${date:universalTime=true:format=yyyy-MM-dd HH\:mm\:ss.fff}" />
+      <parameter name="@level"       layout="${level}" />
+      <parameter name="@logger"      layout="${logger}" />
+      <parameter name="@message"     layout="${message}" />
+      <parameter name="@exception"   layout="${exception:format=tostring}" />
+      <parameter name="@machineName" layout="${machinename}" />
+      <parameter name="@threadId"    layout="${threadid}" />
+    </target>
+  </targets>
+
+  <rules>
+    <logger name="*" minlevel="Info" writeTo="database" />
+  </rules>
+</nlog>
+```
+
+## Properties
+
+<ParamField path="dbProvider" type="string" required>
+  The ADO.NET provider to use. Specify the fully qualified type name of the connection class, optionally followed by the assembly name.
+
+  Common values:
+  - `Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient`
+  - `Npgsql.NpgsqlConnection, Npgsql`
+  - `MySql.Data.MySqlClient.MySqlConnection, MySql.Data`
+  - `Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite`
+  - `System.Data.SqlClient.SqlConnection, System.Data.SqlClient`
+</ParamField>
+
+<ParamField path="connectionString" type="Layout">
+  The ADO.NET connection string. Supports layout renderers. Use this or `connectionStringName`.
+</ParamField>
+
+<ParamField path="connectionStringName" type="string">
+  The name of a connection string defined in `<connectionStrings>` in your app configuration (`appsettings.json` or `app.config`). Use this or `connectionString`.
+</ParamField>
+
+<ParamField path="commandText" type="Layout">
+  The SQL command to execute for each log event. Typically an `INSERT` statement. Supports layout renderers and parameter placeholders.
+</ParamField>
+
+<ParamField path="commandType" type="CommandType" default="Text">
+  The type of the database command. Use `Text` for inline SQL (default) or `StoredProcedure` to call a stored procedure by name.
+</ParamField>
+
+<ParamField path="keepConnection" type="bool" default="false">
+  Keep the database connection open between log events. Can improve performance under high write rates at the cost of holding a connection.
+</ParamField>
+
+### `<parameter>` Element
+
+Each `<parameter>` binds a named SQL parameter to a layout-rendered value from the log event.
+
+<ParamField path="name" type="string" required>
+  The parameter name as it appears in the SQL command (e.g., `@message`).
+</ParamField>
+
+<ParamField path="layout" type="Layout" required>
+  The layout expression whose rendered value is assigned to this parameter.
+</ParamField>
+
+<ParamField path="dbType" type="string">
+  The `DbType` of the parameter (e.g., `String`, `DateTime2`, `Int32`). Optional; inferred from the value when omitted.
+</ParamField>
+
+<ParamField path="size" type="int">
+  The maximum size of the parameter value. Required for some databases and types.
+</ParamField>
+
+<ParamField path="allowDbNull" type="bool" default="false">
+  When `true`, write `DBNull` instead of an empty string when the rendered value is empty.
+</ParamField>
+
+## Using a Stored Procedure
+
+```xml
+<target xsi:type="Database"
+        name="database"
+        dbProvider="Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient"
+        connectionString="Server=myserver;Database=Logs;Integrated Security=true;"
+        commandType="StoredProcedure"
+        commandText="[dbo].[InsertLog]">
+
+  <parameter name="@logged"    layout="${date:universalTime=true:format=yyyy-MM-dd HH\:mm\:ss.fff}" />
+  <parameter name="@level"     layout="${level}" />
+  <parameter name="@logger"    layout="${logger}" />
+  <parameter name="@message"   layout="${message}" />
+  <parameter name="@exception" layout="${exception:format=tostring}" />
+</target>
+```
+
+## Connection String from App Settings
+
+Instead of embedding the connection string in `NLog.config`, reference a named connection string:
+
+```xml
+<target xsi:type="Database"
+        name="database"
+        dbProvider="Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient"
+        connectionStringName="NLogDb"
+        commandText="INSERT INTO Logs (Logged, Level, Message) VALUES (@logged, @level, @message)">
+  <parameter name="@logged"  layout="${date}" />
+  <parameter name="@level"   layout="${level}" />
+  <parameter name="@message" layout="${message}" />
+</target>
+```
+
+## Programmatic Configuration
+
+```csharp
+var dbTarget = new NLog.Targets.DatabaseTarget("database");
+dbTarget.DBProvider = "Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient";
+dbTarget.ConnectionString = "Server=myserver;Database=Logs;Integrated Security=true;";
+dbTarget.CommandText = "INSERT INTO Logs (Logged, Level, Logger, Message) VALUES (@logged, @level, @logger, @message)";
+
+dbTarget.Parameters.Add(new NLog.Targets.DatabaseParameterInfo("@logged",  "${date}"));
+dbTarget.Parameters.Add(new NLog.Targets.DatabaseParameterInfo("@level",   "${level}"));
+dbTarget.Parameters.Add(new NLog.Targets.DatabaseParameterInfo("@logger",  "${logger}"));
+dbTarget.Parameters.Add(new NLog.Targets.DatabaseParameterInfo("@message", "${message}"));
+
+var config = new NLog.Config.LoggingConfiguration();
+config.AddRule(NLog.LogLevel.Info, NLog.LogLevel.Fatal, dbTarget);
+NLog.LogManager.Configuration = config;
+```
+
+## Performance: Async Wrapper
+
+Database writes involve network I/O and can be slow. Wrap the `Database` target in `AsyncWrapper` to offload writes to a background thread and avoid blocking application threads:
+
+```xml
+<targets>
+  <target xsi:type="AsyncWrapper"
+          name="asyncDb"
+          queueLimit="10000"
+          overflowAction="Discard">
+    <target xsi:type="Database"
+            dbProvider="Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient"
+            connectionString="Server=myserver;Database=Logs;Integrated Security=true;"
+            commandText="INSERT INTO Logs (Logged, Level, Message) VALUES (@logged, @level, @message)">
+      <parameter name="@logged"  layout="${date}" />
+      <parameter name="@level"   layout="${level}" />
+      <parameter name="@message" layout="${message}" />
+    </target>
+  </target>
+</targets>
+```
+
+<Warning>
+With `overflowAction="Discard"`, log events may be silently dropped when the queue is full. Use `overflowAction="Block"` to apply back-pressure instead, or `overflowAction="Grow"` to allow the queue to expand without bound.
+</Warning>

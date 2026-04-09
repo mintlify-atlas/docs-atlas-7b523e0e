@@ -1,0 +1,188 @@
+---
+title: "LogLevel"
+description: "Defines the severity levels for log messages in NLog."
+---
+
+`LogLevel` is a sealed class (not an enum) representing the severity of a log event. NLog uses value-based comparison through the `Ordinal` property, so levels can be compared with standard operators.
+
+---
+
+## Level reference
+
+| Level | Ordinal | Typical use |
+|---|---|---|
+| `LogLevel.Trace` | 0 | Most verbose. Step-by-step method execution detail. Rarely enabled in production. |
+| `LogLevel.Debug` | 1 | Internal application events useful during development and troubleshooting. |
+| `LogLevel.Info` | 2 | High-level progress and lifetime events (startup, configuration loaded, request received). |
+| `LogLevel.Warn` | 3 | Recoverable issues: validation failures, temporary faults, degraded behavior. |
+| `LogLevel.Error` | 4 | Functionality has failed or an exception was caught. Requires investigation. |
+| `LogLevel.Fatal` | 5 | Critical failure. The application is about to abort. |
+| `LogLevel.Off` | 6 | Special sentinel used to disable logging. Not a valid level for log events. |
+
+---
+
+## Static fields
+
+<ResponseField name="LogLevel.Trace" type="LogLevel">
+  Most verbose level. Ordinal = 0.
+</ResponseField>
+
+<ResponseField name="LogLevel.Debug" type="LogLevel">
+  Debugging level. Ordinal = 1.
+</ResponseField>
+
+<ResponseField name="LogLevel.Info" type="LogLevel">
+  Informational level. Ordinal = 2.
+</ResponseField>
+
+<ResponseField name="LogLevel.Warn" type="LogLevel">
+  Warning level. Ordinal = 3.
+</ResponseField>
+
+<ResponseField name="LogLevel.Error" type="LogLevel">
+  Error level. Ordinal = 4.
+</ResponseField>
+
+<ResponseField name="LogLevel.Fatal" type="LogLevel">
+  Fatal level. Ordinal = 5.
+</ResponseField>
+
+<ResponseField name="LogLevel.Off" type="LogLevel">
+  Sentinel to disable logging. Ordinal = 6. Do not use as a level in log calls.
+</ResponseField>
+
+---
+
+## Properties
+
+<ResponseField name="Name" type="string">
+  The name of the log level (e.g., `"Info"`, `"Warn"`).
+
+  ```csharp
+  Console.WriteLine(LogLevel.Warn.Name); // "Warn"
+  ```
+</ResponseField>
+
+<ResponseField name="Ordinal" type="int">
+  The numeric severity. Higher ordinals are more severe. Useful when storing levels in databases or comparing without allocating.
+
+  ```csharp
+  Console.WriteLine(LogLevel.Error.Ordinal); // 4
+  ```
+</ResponseField>
+
+---
+
+## Static collections
+
+<ResponseField name="LogLevel.AllLevels" type="IEnumerable<LogLevel>">
+  An ordered read-only list of all levels including `Off`: Trace, Debug, Info, Warn, Error, Fatal, Off.
+
+  ```csharp
+  foreach (var level in LogLevel.AllLevels)
+      Console.WriteLine(level.Name);
+  ```
+</ResponseField>
+
+<ResponseField name="LogLevel.AllLoggingLevels" type="IEnumerable<LogLevel>">
+  Same as `AllLevels` but excluding `Off`. Use this when iterating levels that can be used for actual log events.
+
+  ```csharp
+  foreach (var level in LogLevel.AllLoggingLevels)
+      rule.EnableLoggingForLevel(level);
+  ```
+</ResponseField>
+
+---
+
+## Factory methods
+
+<ResponseField name="LogLevel.FromString(string levelName)" type="LogLevel">
+  Parses a log level by name (case-insensitive). Accepts both NLog names (`"Info"`) and .NET Microsoft.Extensions.Logging aliases (`"Information"`, `"Warning"`, `"None"`).
+
+  <ParamField path="levelName" type="string" required>
+    The level name to parse.
+  </ParamField>
+
+  ```csharp
+  LogLevel level = LogLevel.FromString("warn"); // Returns LogLevel.Warn
+  LogLevel info  = LogLevel.FromString("Information"); // Returns LogLevel.Info (.NET MEL alias)
+  ```
+
+  Throws `ArgumentException` if the name is not recognized.
+</ResponseField>
+
+<ResponseField name="LogLevel.FromOrdinal(int ordinal)" type="LogLevel">
+  Returns the `LogLevel` corresponding to the given ordinal (0–6).
+
+  <ParamField path="ordinal" type="int" required>
+    The ordinal value (0 = Trace, 6 = Off).
+  </ParamField>
+
+  ```csharp
+  LogLevel level = LogLevel.FromOrdinal(2); // LogLevel.Info
+  ```
+
+  Throws `ArgumentException` for values outside 0–6.
+</ResponseField>
+
+---
+
+## Comparison operators
+
+`LogLevel` implements `IComparable<LogLevel>` and `IEquatable<LogLevel>` and overloads all six comparison operators. Comparisons are ordinal-based.
+
+```csharp
+// Severity checks
+bool isMoreSevere  = LogLevel.Error > LogLevel.Warn;   // true
+bool isSame        = LogLevel.Info == LogLevel.Info;   // true
+bool isLessSevere  = LogLevel.Debug < LogLevel.Info;   // true
+
+// Guard pattern: only log levels >= current threshold
+LogLevel threshold = LogLevel.Info;
+foreach (var level in LogLevel.AllLoggingLevels)
+{
+    if (level >= threshold)
+        Console.WriteLine($"Enabled: {level.Name}");
+}
+```
+
+---
+
+## Formatting
+
+`LogLevel.ToString()` returns the level name. The `IFormattable` implementation supports the `"D"` format specifier to return the ordinal as a string (analogous to `Enum.ToString("D")`).
+
+```csharp
+string name    = LogLevel.Error.ToString();       // "Error"
+string ordinal = ((IFormattable)LogLevel.Error).ToString("D", null); // "4"
+```
+
+---
+
+## Usage examples
+
+<CodeGroup>
+
+```csharp Set global threshold
+// Only process Warn and above
+LogManager.GlobalThreshold = LogLevel.Warn;
+```
+
+```csharp Dynamic level check
+public void Log(string level, string message)
+{
+    LogLevel logLevel = LogLevel.FromString(level);
+    _logger.Log(new LogEventInfo(logLevel, _logger.Name, message));
+}
+```
+
+```csharp Range-based rule
+var config = new LoggingConfiguration();
+var target = new ConsoleTarget("console");
+
+// Enable only Info, Warn, Error for the console target
+config.AddRule(LogLevel.Info, LogLevel.Error, target);
+```
+
+</CodeGroup>
